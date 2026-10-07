@@ -1,0 +1,34 @@
+<div class="changelog-container">
+    <h1>📋 Cybersalt Page Protector - Changelog</h1>
+
+    <h2>
+        <span class="version-badge">v0.1.0</span>
+        <span class="date">Unreleased (first version, in development)</span>
+    </h2>
+
+    <h3><span class="section-icon">🚀</span>New</h3>
+    <ul>
+        <li><strong>Proof-of-work check</strong>: in front of selected menu items, using Joomla 6.1's core Proof-of-Work captcha through Joomla's captcha framework (any installed captcha plugin can be chosen instead).</li>
+        <li><strong>Protection modes</strong>: only the selected pages, or every page except the selected ones.</li>
+        <li><strong>Other routes to the same content</strong>: protected content reached through another menu item, a bare <code>index.php</code> link or a forged <code>Itemid</code> is still protected, including articles and subcategories inside a protected category.</li>
+        <li><strong>In-place challenge</strong>: shown inside the site template at the same URL. It starts and continues automatically, so a real visitor waits about half a second.</li>
+        <li><strong>Site-wide pass</strong>: a signed cookie (HMAC, bound to the browser and optionally the IP) with a configurable lifetime. Admins get "Reset all passes", plus "Clear my pass" for testing in their own browser.</li>
+        <li><strong>Exemptions</strong>: logged-in users or chosen user groups, IP and CIDR allow-list, and search engines verified by forward-confirmed reverse DNS.</li>
+        <li><strong>Non-HTML formats</strong>: feeds, JSON and raw output for protected pages get a 403 instead of the content.</li>
+        <li><strong>Caching</strong>: protected pages kept out of Joomla's page cache and sent with no-store headers.</li>
+        <li><strong>Dashboard</strong>: health checks, 24-hour stats linking to the filtered log, protected pages, most-challenged IPs, recent events, support panel.</li>
+        <li><strong>Event log</strong>: a filter for every column, full-width detail rows, CSV download, text dump, delete selected and Clear All.</li>
+        <li><strong>Click-to-copy</strong>: on IP addresses; with shortened IPs it copies the firewall-ready range (<code>/24</code> for IPv4, <code>/48</code> for IPv6).</li>
+        <li><strong>Polish</strong>: branded Options tabs, post-install card, custom ACL actions for viewing and managing the log.</li>
+    </ul>
+
+    <h3><span class="section-icon">🔍</span>Security / Privacy</h3>
+    <ul>
+        <li><strong>IP shortening on by default (GDPR-friendly)</strong>: the log stores only the network part of each address. Saving Options with it on also shortens any full addresses already in the log. Protection still uses the full address during the request.</li>
+        <li><strong>Clean front end</strong>: no vendor or support mentions anywhere in front-end output.</li>
+        <li><strong>Access control</strong>: ACL gate on every admin controller method; CSRF token on every state-changing action.</li>
+        <li><strong>No open redirect</strong>: the return URL after the check is restricted to the same site.</li>
+        <li><strong>Proxy headers</strong>: trusted only when explicitly configured.</li>
+        <li><strong>CSV export</strong>: neutralises spreadsheet formulas in scraper-supplied values.</li>
+    </ul>
+</div>

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<extension type="plugin" group="system" method="upgrade">
+    <name>PLG_SYSTEM_CSPAGEPROTECTOR</name>
+    <author>Cybersalt</author>
+    <creationDate>October 2026</creationDate>
+    <copyright>Copyright (C) 2026 Cybersalt. All rights reserved.</copyright>
+    <license>GNU General Public License version 2 or later</license>
+    <authorEmail>support@cybersalt.com</authorEmail>
+    <authorUrl>https://cybersalt.com</authorUrl>
+    <version>0.1.0</version>
+    <description>PLG_SYSTEM_CSPAGEPROTECTOR_XML_DESCRIPTION</description>
+
+    <targetplatform name="joomla" version="5\.[0-9]+|6\.[0-9]+" />
+
+    <namespace path="src">Cybersalt\Plugin\System\Cspageprotector</namespace>
+
+    <files>
+        <folder plugin="cspageprotector">services</folder>
+        <folder>src</folder>
+    </files>
+
+    <languages folder="language">
+        <language tag="en-GB">en-GB/plg_system_cspageprotector.ini</language>
+        <language tag="en-GB">en-GB/plg_system_cspageprotector.sys.ini</language>
+    </languages>
+
+    <config>
+        <fields name="params">
+            <fieldset name="basic">
+                <field
+                    name="settings_note"
+                    type="note"
+                    class="alert alert-info"
+                    label="PLG_SYSTEM_CSPAGEPROTECTOR_NOTE_LABEL"
+                    description="PLG_SYSTEM_CSPAGEPROTECTOR_NOTE_DESC"
+                />
+            </fieldset>
+        </fields>
+    </config>
+</extension>

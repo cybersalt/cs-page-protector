@@ -20,3 +20,6 @@ composer.lock
 .claudian-tmp/
 .work/
 .claude/
+
+## Test artefacts
+.playwright-mcp/

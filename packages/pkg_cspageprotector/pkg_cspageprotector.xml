@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<extension type="package" method="upgrade">
+    <name>PKG_CSPAGEPROTECTOR</name>
+    <packagename>cspageprotector</packagename>
+    <author>Cybersalt</author>
+    <creationDate>October 2026</creationDate>
+    <copyright>Copyright (C) 2026 Cybersalt. All rights reserved.</copyright>
+    <license>GNU General Public License version 2 or later</license>
+    <authorEmail>support@cybersalt.com</authorEmail>
+    <authorUrl>https://cybersalt.com</authorUrl>
+    <version>0.1.0</version>
+    <description>PKG_CSPAGEPROTECTOR_XML_DESCRIPTION</description>
+    <scriptfile>script.php</scriptfile>
+    <blockChildUninstall>true</blockChildUninstall>
+
+    <targetplatform name="joomla" version="5\.[0-9]+|6\.[0-9]+" />
+
+    <files folder="packages">
+        <file type="component" id="com_cspageprotector">com_cspageprotector.zip</file>
+        <file type="plugin" id="cspageprotector" group="system">plg_system_cspageprotector.zip</file>
+    </files>
+
+    <languages folder="language">
+        <language tag="en-GB">en-GB/pkg_cspageprotector.sys.ini</language>
+    </languages>
+
+    <updateservers>
+        <server type="extension" priority="1" name="Cybersalt Page Protector Updates">https://raw.githubusercontent.com/cybersalt/cs-page-protector/main/updates.xml</server>
+    </updateservers>
+</extension>

@@ -1,0 +1,66 @@
+/*
+ * Cybersalt Page Protector - challenge page.
+ * Inherits the site template's fonts and colours; only layout is set here so
+ * the challenge looks native on any template, light or dark.
+ */
+
+.cspp-challenge {
+    display: flex;
+    justify-content: center;
+    padding: 2rem 1rem;
+}
+
+.cspp-challenge-card {
+    width: 100%;
+    max-width: 34rem;
+    padding: 2rem;
+    border: 1px solid rgba(127, 127, 127, 0.35);
+    border-radius: 0.75rem;
+    text-align: center;
+}
+
+.cspp-challenge-heading {
+    margin: 0 0 0.75rem;
+    font-size: 1.6rem;
+    line-height: 1.25;
+}
+
+.cspp-challenge-message {
+    margin-bottom: 1.5rem;
+}
+
+.cspp-challenge-message > :last-child {
+    margin-bottom: 0;
+}
+
+.cspp-challenge-captcha {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 1rem;
+}
+
+.cspp-challenge-status {
+    min-height: 1.5em;
+    margin: 0 0 1rem;
+    font-size: 0.95rem;
+}
+
+.cspp-challenge-form.cspp-submitting .cspp-challenge-submit {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+.cspp-challenge-why {
+    margin-top: 1.5rem;
+    font-size: 0.9rem;
+    text-align: left;
+}
+
+.cspp-challenge-why summary {
+    cursor: pointer;
+    text-align: center;
+}
+
+.cspp-challenge-why p {
+    margin: 0.75rem 0 0;
+}

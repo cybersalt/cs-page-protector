@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<extension type="component" method="upgrade">
+    <name>COM_CSPAGEPROTECTOR</name>
+    <element>com_cspageprotector</element>
+    <author>Cybersalt</author>
+    <creationDate>October 2026</creationDate>
+    <copyright>Copyright (C) 2026 Cybersalt. All rights reserved.</copyright>
+    <license>GNU General Public License version 2 or later</license>
+    <authorEmail>support@cybersalt.com</authorEmail>
+    <authorUrl>https://cybersalt.com</authorUrl>
+    <version>0.1.0</version>
+    <description>COM_CSPAGEPROTECTOR_XML_DESCRIPTION</description>
+
+    <targetplatform name="joomla" version="5\.[0-9]+|6\.[0-9]+" />
+
+    <namespace path="src">Cybersalt\Component\Cspageprotector</namespace>
+
+    <install>
+        <sql>
+            <file driver="mysql" charset="utf8">sql/install.mysql.utf8.sql</file>
+        </sql>
+    </install>
+    <uninstall>
+        <sql>
+            <file driver="mysql" charset="utf8">sql/uninstall.mysql.utf8.sql</file>
+        </sql>
+    </uninstall>
+    <update>
+        <schemas>
+            <schemapath type="mysql">sql/updates/mysql</schemapath>
+        </schemas>
+    </update>
+
+    <files folder="site">
+        <folder>language</folder>
+        <folder>src</folder>
+        <folder>tmpl</folder>
+    </files>
+    <languages folder="site/language">
+        <language tag="en-GB">en-GB/com_cspageprotector.ini</language>
+    </languages>
+
+    <media destination="com_cspageprotector" folder="media">
+        <filename>joomla.asset.json</filename>
+        <folder>css</folder>
+        <folder>images</folder>
+        <folder>js</folder>
+    </media>
+
+    <administration>
+        <menu img="class:shield-alt" link="option=com_cspageprotector&amp;view=dashboard">COM_CSPAGEPROTECTOR_MENU</menu>
+        <submenu>
+            <menu link="option=com_cspageprotector&amp;view=dashboard">COM_CSPAGEPROTECTOR_SUBMENU_DASHBOARD</menu>
+            <menu link="option=com_cspageprotector&amp;view=logs">COM_CSPAGEPROTECTOR_SUBMENU_LOGS</menu>
+            <menu link="option=com_config&amp;view=component&amp;component=com_cspageprotector">COM_CSPAGEPROTECTOR_SUBMENU_OPTIONS</menu>
+        </submenu>
+        <files folder="admin">
+            <filename>access.xml</filename>
+            <filename>config.xml</filename>
+            <folder>forms</folder>
+            <folder>language</folder>
+            <folder>services</folder>
+            <folder>sql</folder>
+            <folder>src</folder>
+            <folder>tmpl</folder>
+        </files>
+        <languages folder="admin/language">
+            <language tag="en-GB">en-GB/com_cspageprotector.ini</language>
+            <language tag="en-GB">en-GB/com_cspageprotector.sys.ini</language>
+        </languages>
+    </administration>
+
+    <changelogurl>https://raw.githubusercontent.com/cybersalt/cs-page-protector/main/CHANGELOG.html</changelogurl>
+</extension>

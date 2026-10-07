@@ -1,0 +1,381 @@
+<?xml version="1.0" encoding="utf-8"?>
+<config>
+    <fieldset
+        name="protection"
+        label="COM_CSPAGEPROTECTOR_FIELDSET_PROTECTION"
+        description="COM_CSPAGEPROTECTOR_FIELDSET_PROTECTION_DESC"
+        addfieldprefix="Cybersalt\Component\Cspageprotector\Administrator\Field"
+    >
+        <field
+            name="brand_protection"
+            type="Brandheader"
+            subtitle="COM_CSPAGEPROTECTOR_FIELDSET_PROTECTION_SUBTITLE"
+        />
+
+        <field
+            name="protection_mode"
+            type="list"
+            label="COM_CSPAGEPROTECTOR_FIELD_PROTECTION_MODE_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_PROTECTION_MODE_DESC"
+            default="selected"
+            validate="options"
+        >
+            <option value="selected">COM_CSPAGEPROTECTOR_FIELD_PROTECTION_MODE_SELECTED</option>
+            <option value="all_except">COM_CSPAGEPROTECTOR_FIELD_PROTECTION_MODE_ALL_EXCEPT</option>
+        </field>
+
+        <field
+            name="menu_items"
+            type="menuitem"
+            label="COM_CSPAGEPROTECTOR_FIELD_MENU_ITEMS_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_MENU_ITEMS_DESC"
+            multiple="true"
+            client_id="0"
+            disable="separator,alias,heading,url"
+            layout="joomla.form.field.groupedlist-fancy-select"
+            filter="intarray"
+        />
+
+        <field
+            name="match_content"
+            type="radio"
+            label="COM_CSPAGEPROTECTOR_FIELD_MATCH_CONTENT_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_MATCH_CONTENT_DESC"
+            class="btn-group btn-group-yesno"
+            default="1"
+            filter="integer"
+            showon="protection_mode:selected"
+        >
+            <option value="1">JYES</option>
+            <option value="0">JNO</option>
+        </field>
+    </fieldset>
+
+    <fieldset
+        name="challenge"
+        label="COM_CSPAGEPROTECTOR_FIELDSET_CHALLENGE"
+        description="COM_CSPAGEPROTECTOR_FIELDSET_CHALLENGE_DESC"
+        addfieldprefix="Cybersalt\Component\Cspageprotector\Administrator\Field"
+    >
+        <field
+            name="brand_challenge"
+            type="Brandheader"
+            subtitle="COM_CSPAGEPROTECTOR_FIELDSET_CHALLENGE_SUBTITLE"
+        />
+
+        <field
+            name="captcha_plugin"
+            type="Captchaplugin"
+            label="COM_CSPAGEPROTECTOR_FIELD_CAPTCHA_PLUGIN_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_CAPTCHA_PLUGIN_DESC"
+            default="powcaptcha"
+        />
+
+        <field
+            name="captcha_unavailable"
+            type="list"
+            label="COM_CSPAGEPROTECTOR_FIELD_CAPTCHA_UNAVAILABLE_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_CAPTCHA_UNAVAILABLE_DESC"
+            default="allow"
+            validate="options"
+        >
+            <option value="allow">COM_CSPAGEPROTECTOR_FIELD_CAPTCHA_UNAVAILABLE_ALLOW</option>
+            <option value="block">COM_CSPAGEPROTECTOR_FIELD_CAPTCHA_UNAVAILABLE_BLOCK</option>
+        </field>
+
+        <field
+            name="auto_start"
+            type="radio"
+            label="COM_CSPAGEPROTECTOR_FIELD_AUTO_START_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_AUTO_START_DESC"
+            class="btn-group btn-group-yesno"
+            default="1"
+            filter="integer"
+        >
+            <option value="1">JYES</option>
+            <option value="0">JNO</option>
+        </field>
+
+        <field
+            name="auto_submit"
+            type="radio"
+            label="COM_CSPAGEPROTECTOR_FIELD_AUTO_SUBMIT_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_AUTO_SUBMIT_DESC"
+            class="btn-group btn-group-yesno"
+            default="1"
+            filter="integer"
+        >
+            <option value="1">JYES</option>
+            <option value="0">JNO</option>
+        </field>
+
+        <field
+            name="pass_lifetime"
+            type="list"
+            label="COM_CSPAGEPROTECTOR_FIELD_PASS_LIFETIME_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_PASS_LIFETIME_DESC"
+            default="24"
+            filter="integer"
+            validate="options"
+        >
+            <option value="1">COM_CSPAGEPROTECTOR_FIELD_PASS_LIFETIME_1H</option>
+            <option value="6">COM_CSPAGEPROTECTOR_FIELD_PASS_LIFETIME_6H</option>
+            <option value="12">COM_CSPAGEPROTECTOR_FIELD_PASS_LIFETIME_12H</option>
+            <option value="24">COM_CSPAGEPROTECTOR_FIELD_PASS_LIFETIME_24H</option>
+            <option value="72">COM_CSPAGEPROTECTOR_FIELD_PASS_LIFETIME_3D</option>
+            <option value="168">COM_CSPAGEPROTECTOR_FIELD_PASS_LIFETIME_7D</option>
+            <option value="720">COM_CSPAGEPROTECTOR_FIELD_PASS_LIFETIME_30D</option>
+        </field>
+
+        <field
+            name="bind_ip"
+            type="radio"
+            label="COM_CSPAGEPROTECTOR_FIELD_BIND_IP_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_BIND_IP_DESC"
+            class="btn-group btn-group-yesno"
+            default="0"
+            filter="integer"
+        >
+            <option value="1">JYES</option>
+            <option value="0">JNO</option>
+        </field>
+
+        <field
+            name="challenge_status"
+            type="list"
+            label="COM_CSPAGEPROTECTOR_FIELD_CHALLENGE_STATUS_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_CHALLENGE_STATUS_DESC"
+            default="200"
+            filter="integer"
+            validate="options"
+        >
+            <option value="200">COM_CSPAGEPROTECTOR_FIELD_CHALLENGE_STATUS_200</option>
+            <option value="403">COM_CSPAGEPROTECTOR_FIELD_CHALLENGE_STATUS_403</option>
+        </field>
+
+        <field
+            name="challenge_heading"
+            type="text"
+            label="COM_CSPAGEPROTECTOR_FIELD_CHALLENGE_HEADING_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_CHALLENGE_HEADING_DESC"
+            hint="COM_CSPAGEPROTECTOR_CHALLENGE_HEADING_DEFAULT"
+            filter="string"
+            maxlength="200"
+        />
+
+        <field
+            name="challenge_message"
+            type="textarea"
+            label="COM_CSPAGEPROTECTOR_FIELD_CHALLENGE_MESSAGE_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_CHALLENGE_MESSAGE_DESC"
+            hint="COM_CSPAGEPROTECTOR_CHALLENGE_MESSAGE_DEFAULT"
+            rows="4"
+            filter="safehtml"
+        />
+
+        <field
+            name="pass_salt"
+            type="hidden"
+            filter="cmd"
+        />
+    </fieldset>
+
+    <fieldset
+        name="exemptions"
+        label="COM_CSPAGEPROTECTOR_FIELDSET_EXEMPTIONS"
+        description="COM_CSPAGEPROTECTOR_FIELDSET_EXEMPTIONS_DESC"
+        addfieldprefix="Cybersalt\Component\Cspageprotector\Administrator\Field"
+    >
+        <field
+            name="brand_exemptions"
+            type="Brandheader"
+            subtitle="COM_CSPAGEPROTECTOR_FIELDSET_EXEMPTIONS_SUBTITLE"
+        />
+
+        <field
+            name="exempt_logged_in"
+            type="radio"
+            label="COM_CSPAGEPROTECTOR_FIELD_EXEMPT_LOGGED_IN_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_EXEMPT_LOGGED_IN_DESC"
+            class="btn-group btn-group-yesno"
+            default="1"
+            filter="integer"
+        >
+            <option value="1">JYES</option>
+            <option value="0">JNO</option>
+        </field>
+
+        <field
+            name="exempt_groups"
+            type="usergrouplist"
+            label="COM_CSPAGEPROTECTOR_FIELD_EXEMPT_GROUPS_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_EXEMPT_GROUPS_DESC"
+            multiple="true"
+            layout="joomla.form.field.list-fancy-select"
+            filter="intarray"
+            showon="exempt_logged_in:0"
+        />
+
+        <field
+            name="exempt_search_engines"
+            type="radio"
+            label="COM_CSPAGEPROTECTOR_FIELD_EXEMPT_SEARCH_ENGINES_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_EXEMPT_SEARCH_ENGINES_DESC"
+            class="btn-group btn-group-yesno"
+            default="1"
+            filter="integer"
+        >
+            <option value="1">JYES</option>
+            <option value="0">JNO</option>
+        </field>
+
+        <field
+            name="log_bots"
+            type="radio"
+            label="COM_CSPAGEPROTECTOR_FIELD_LOG_BOTS_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_LOG_BOTS_DESC"
+            class="btn-group btn-group-yesno"
+            default="0"
+            filter="integer"
+            showon="exempt_search_engines:1"
+        >
+            <option value="1">JYES</option>
+            <option value="0">JNO</option>
+        </field>
+
+        <field
+            name="exempt_ips"
+            type="textarea"
+            label="COM_CSPAGEPROTECTOR_FIELD_EXEMPT_IPS_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_EXEMPT_IPS_DESC"
+            hint="COM_CSPAGEPROTECTOR_FIELD_EXEMPT_IPS_HINT"
+            rows="5"
+            filter="string"
+        />
+
+        <field
+            name="ip_source"
+            type="list"
+            label="COM_CSPAGEPROTECTOR_FIELD_IP_SOURCE_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_IP_SOURCE_DESC"
+            default="remote_addr"
+            validate="options"
+        >
+            <option value="remote_addr">COM_CSPAGEPROTECTOR_FIELD_IP_SOURCE_REMOTE_ADDR</option>
+            <option value="cf_connecting_ip">COM_CSPAGEPROTECTOR_FIELD_IP_SOURCE_CLOUDFLARE</option>
+            <option value="x_forwarded_for">COM_CSPAGEPROTECTOR_FIELD_IP_SOURCE_XFF</option>
+            <option value="x_real_ip">COM_CSPAGEPROTECTOR_FIELD_IP_SOURCE_X_REAL_IP</option>
+        </field>
+    </fieldset>
+
+    <fieldset
+        name="logging"
+        label="COM_CSPAGEPROTECTOR_FIELDSET_LOGGING"
+        description="COM_CSPAGEPROTECTOR_FIELDSET_LOGGING_DESC"
+        addfieldprefix="Cybersalt\Component\Cspageprotector\Administrator\Field"
+    >
+        <field
+            name="brand_logging"
+            type="Brandheader"
+            subtitle="COM_CSPAGEPROTECTOR_FIELDSET_LOGGING_SUBTITLE"
+        />
+
+        <field
+            name="logging_enabled"
+            type="radio"
+            label="COM_CSPAGEPROTECTOR_FIELD_LOGGING_ENABLED_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_LOGGING_ENABLED_DESC"
+            class="btn-group btn-group-yesno"
+            default="1"
+            filter="integer"
+        >
+            <option value="1">JYES</option>
+            <option value="0">JNO</option>
+        </field>
+
+        <field
+            name="anonymize_ip"
+            type="radio"
+            label="COM_CSPAGEPROTECTOR_FIELD_ANONYMIZE_IP_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_ANONYMIZE_IP_DESC"
+            class="btn-group btn-group-yesno"
+            default="1"
+            filter="integer"
+            showon="logging_enabled:1"
+        >
+            <option value="1">JYES</option>
+            <option value="0">JNO</option>
+        </field>
+
+        <field
+            name="retention_days"
+            type="number"
+            label="COM_CSPAGEPROTECTOR_FIELD_RETENTION_DAYS_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_RETENTION_DAYS_DESC"
+            default="30"
+            min="0"
+            max="3650"
+            step="1"
+            filter="integer"
+            showon="logging_enabled:1"
+        />
+    </fieldset>
+
+    <fieldset
+        name="support"
+        label="COM_CSPAGEPROTECTOR_FIELDSET_SUPPORT"
+        description="COM_CSPAGEPROTECTOR_FIELDSET_SUPPORT_DESC"
+        addfieldprefix="Cybersalt\Component\Cspageprotector\Administrator\Field"
+    >
+        <field
+            name="brand_support"
+            type="Brandheader"
+            subtitle="COM_CSPAGEPROTECTOR_FIELDSET_SUPPORT_SUBTITLE"
+        />
+
+        <field
+            name="support_email"
+            type="email"
+            label="COM_CSPAGEPROTECTOR_FIELD_SUPPORT_EMAIL_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_SUPPORT_EMAIL_DESC"
+            default="support@cybersalt.com"
+            validate="email"
+            filter="string"
+        />
+
+        <field
+            name="support_url"
+            type="url"
+            label="COM_CSPAGEPROTECTOR_FIELD_SUPPORT_URL_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_SUPPORT_URL_DESC"
+            default="https://www.cybersalt.com/services/support-request-form"
+            validate="url"
+            filter="url"
+        />
+
+        <field
+            name="support_label"
+            type="text"
+            label="COM_CSPAGEPROTECTOR_FIELD_SUPPORT_LABEL_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_SUPPORT_LABEL_DESC"
+            default="Cybersalt support"
+            filter="string"
+        />
+    </fieldset>
+
+    <fieldset
+        name="permissions"
+        label="JCONFIG_PERMISSIONS_LABEL"
+        description="JCONFIG_PERMISSIONS_DESC"
+    >
+        <field
+            name="rules"
+            type="rules"
+            label="JCONFIG_PERMISSIONS_LABEL"
+            filter="rules"
+            validate="rules"
+            component="com_cspageprotector"
+            section="component"
+        />
+    </fieldset>
+</config>

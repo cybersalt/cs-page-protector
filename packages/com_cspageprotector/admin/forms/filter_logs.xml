@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<form addfieldprefix="Cybersalt\Component\Cspageprotector\Administrator\Field">
+    <fields name="filter">
+        <field
+            name="search"
+            type="text"
+            label="COM_CSPAGEPROTECTOR_FILTER_SEARCH_LABEL"
+            description="COM_CSPAGEPROTECTOR_FILTER_SEARCH_DESC"
+            hint="JSEARCH_FILTER"
+        />
+
+        <field
+            name="event"
+            type="list"
+            label="COM_CSPAGEPROTECTOR_FILTER_EVENT"
+            onchange="this.form.submit();"
+        >
+            <option value="">COM_CSPAGEPROTECTOR_FILTER_EVENT_SELECT</option>
+            <option value="challenged">COM_CSPAGEPROTECTOR_EVENT_CHALLENGED</option>
+            <option value="passed">COM_CSPAGEPROTECTOR_EVENT_PASSED</option>
+            <option value="failed">COM_CSPAGEPROTECTOR_EVENT_FAILED</option>
+            <option value="blocked">COM_CSPAGEPROTECTOR_EVENT_BLOCKED</option>
+            <option value="bot">COM_CSPAGEPROTECTOR_EVENT_BOT</option>
+            <option value="error">COM_CSPAGEPROTECTOR_EVENT_ERROR</option>
+        </field>
+
+        <field
+            name="since"
+            type="list"
+            label="COM_CSPAGEPROTECTOR_FILTER_SINCE"
+            onchange="this.form.submit();"
+        >
+            <option value="">COM_CSPAGEPROTECTOR_FILTER_SINCE_SELECT</option>
+            <option value="1h">COM_CSPAGEPROTECTOR_FILTER_SINCE_1H</option>
+            <option value="24h">COM_CSPAGEPROTECTOR_FILTER_SINCE_24H</option>
+            <option value="7d">COM_CSPAGEPROTECTOR_FILTER_SINCE_7D</option>
+            <option value="30d">COM_CSPAGEPROTECTOR_FILTER_SINCE_30D</option>
+        </field>
+
+        <field
+            name="menu_item"
+            type="Logmenuitem"
+            label="COM_CSPAGEPROTECTOR_FILTER_MENU_ITEM"
+            onchange="this.form.submit();"
+        >
+            <option value="">COM_CSPAGEPROTECTOR_FILTER_MENU_ITEM_SELECT</option>
+        </field>
+
+        <field
+            name="ip"
+            type="text"
+            label="COM_CSPAGEPROTECTOR_FILTER_IP"
+            hint="COM_CSPAGEPROTECTOR_FILTER_IP_HINT"
+            onchange="this.form.submit();"
+        />
+
+        <field
+            name="url"
+            type="text"
+            label="COM_CSPAGEPROTECTOR_FILTER_URL"
+            hint="COM_CSPAGEPROTECTOR_FILTER_URL_HINT"
+            onchange="this.form.submit();"
+        />
+
+        <field
+            name="ua"
+            type="text"
+            label="COM_CSPAGEPROTECTOR_FILTER_UA"
+            hint="COM_CSPAGEPROTECTOR_FILTER_UA_HINT"
+            onchange="this.form.submit();"
+        />
+    </fields>
+
+    <fields name="list">
+        <field
+            name="fullordering"
+            type="list"
+            label="JGLOBAL_SORT_BY"
+            default="a.created DESC"
+            onchange="this.form.submit();"
+            validate="options"
+        >
+            <option value="">JGLOBAL_SORT_BY</option>
+            <option value="a.created DESC">COM_CSPAGEPROTECTOR_SORT_CREATED_DESC</option>
+            <option value="a.created ASC">COM_CSPAGEPROTECTOR_SORT_CREATED_ASC</option>
+            <option value="a.event ASC">COM_CSPAGEPROTECTOR_SORT_EVENT_ASC</option>
+            <option value="a.ip ASC">COM_CSPAGEPROTECTOR_SORT_IP_ASC</option>
+            <option value="m.title ASC">COM_CSPAGEPROTECTOR_SORT_PAGE_ASC</option>
+            <option value="a.id DESC">JGRID_HEADING_ID_DESC</option>
+            <option value="a.id ASC">JGRID_HEADING_ID_ASC</option>
+        </field>
+
+        <field
+            name="limit"
+            type="limitbox"
+            label="JGLOBAL_LIST_LIMIT"
+            default="50"
+            onchange="this.form.submit();"
+        />
+    </fields>
+</form>

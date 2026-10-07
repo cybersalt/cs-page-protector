@@ -1,0 +1,40 @@
+{
+  "$schema": "https://developer.joomla.org/schemas/json-schema/web_assets.json",
+  "name": "com_cspageprotector",
+  "version": "0.1.0",
+  "description": "Cybersalt Page Protector assets",
+  "license": "GPL-2.0-or-later",
+  "assets": [
+    {
+      "name": "com_cspageprotector.admin",
+      "type": "style",
+      "uri": "com_cspageprotector/admin.css",
+      "version": "auto"
+    },
+    {
+      "name": "com_cspageprotector.admin",
+      "type": "script",
+      "uri": "com_cspageprotector/admin.js",
+      "version": "auto",
+      "dependencies": ["core"],
+      "attributes": {
+        "defer": true
+      }
+    },
+    {
+      "name": "com_cspageprotector.challenge",
+      "type": "style",
+      "uri": "com_cspageprotector/challenge.css",
+      "version": "auto"
+    },
+    {
+      "name": "com_cspageprotector.challenge",
+      "type": "script",
+      "uri": "com_cspageprotector/challenge.js",
+      "version": "auto",
+      "attributes": {
+        "defer": true
+      }
+    }
+  ]
+}

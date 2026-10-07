@@ -1,0 +1,8 @@
+# Keep LF everywhere (matches .editorconfig and the phpcs eolChar rule),
+# regardless of core.autocrlf on Windows checkouts.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.zip binary
+*.ps1 text eol=lf

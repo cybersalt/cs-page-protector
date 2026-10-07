@@ -1,0 +1,68 @@
+/* Cybersalt Page Protector - admin styles. Layout only; colours come from Atum. */
+
+.cspp-stat-card {
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.cspp-stat-card:hover,
+.cspp-stat-card:focus {
+    transform: translateY(-2px);
+    box-shadow: 0 0.35rem 0.8rem rgba(0, 0, 0, 0.12);
+}
+
+/* Keep the log table inside the viewport: long URLs and user agents are
+   truncated with an ellipsis; the full values are in the expandable details. */
+#csppLogList {
+    table-layout: fixed;
+    width: 100%;
+}
+
+#csppLogList .cspp-col-check { width: 2.5rem; }
+#csppLogList .cspp-col-date  { width: 10.5rem; }
+#csppLogList .cspp-col-event { width: 7.5rem; }
+#csppLogList .cspp-col-ip    { width: 11rem; }
+#csppLogList .cspp-col-page  { width: 10rem; }
+#csppLogList .cspp-col-id    { width: 4.5rem; }
+
+.cspp-detail-toggle {
+    display: block;
+    width: 100%;
+    overflow: hidden;
+    text-align: start;
+    text-decoration: none;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cspp-detail-toggle .icon-chevron-down {
+    display: inline-block;
+    transition: transform 0.15s ease;
+}
+
+.cspp-detail-toggle[aria-expanded="true"] .icon-chevron-down {
+    transform: rotate(180deg);
+}
+
+.cspp-ua-cell,
+.cspp-url-cell {
+    overflow: hidden;
+}
+
+.cspp-ua-cell a.cspp-ua-link {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cspp-copy.cspp-copied .icon-copy::before {
+    content: "\f00c"; /* Font Awesome check, used by Atum's icon font */
+}
+
+html[data-bs-theme="dark"] .cspp-logo,
+html[data-color-scheme="dark"] .cspp-logo {
+    background-color: #fff;
+    border-radius: 50%;
+    padding: 4px;
+    box-sizing: content-box;
+}

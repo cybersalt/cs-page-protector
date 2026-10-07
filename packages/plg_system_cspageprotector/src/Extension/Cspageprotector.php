@@ -71,6 +71,7 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
             'onExtensionAfterSave'   => 'onExtensionAfterSave',
             'onAfterModuleList'      => 'onAfterModuleList',
             'onRenderModule'         => 'onRenderModule',
+            'onContentPrepare'       => 'onContentPrepare',
         ];
     }
 
@@ -120,6 +121,17 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
             $this->protectedModuleOnPage = true;
             $app->allowCache(false);
 
+            // Never let Joomla's module cache store a protected module: the
+            // cache key ignores who is viewing, so a verified visitor's copy
+            // would be served to scrapers (and a placeholder, with its form
+            // token, to verified visitors). Done for every visitor.
+            foreach ($protected as $module) {
+                $moduleParams = new Registry((string) ($module->params ?? ''));
+                $moduleParams->set('cache', 0);
+                $moduleParams->set('owncache', 0);
+                $module->params = $moduleParams->toString();
+            }
+
             if (ProtectionHelper::visitorHasAccess($app, $params)) {
                 return;
             }
@@ -158,11 +170,15 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
      */
     public function onRenderModule(EventInterface $event): void
     {
-        if (!$this->protectedModuleOnPage) {
+        $app = $this->getApplication();
+
+        // Checked on every render, not only for modules in the page's list:
+        // {loadmodule}, {loadposition} and third-party module loaders render
+        // modules that never went through onAfterModuleList.
+        if (!$this->isActive($app)) {
             return;
         }
 
-        $app    = $this->getApplication();
         $module = $event->getArgument('subject') ?? $event->getArgument(0);
 
         if (!\is_object($module) || !isset($module->content)) {
@@ -172,7 +188,14 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
         try {
             $params = ProtectionHelper::getParams();
 
-            if (!ProtectionHelper::isProtectedModule($module, $params) || ProtectionHelper::visitorHasAccess($app, $params)) {
+            if (!ProtectionHelper::hasModuleProtection($params) || !ProtectionHelper::isProtectedModule($module, $params)) {
+                return;
+            }
+
+            // Keeps the page out of the page cache, wherever the module came from.
+            $this->protectedModuleOnPage = true;
+
+            if (ProtectionHelper::visitorHasAccess($app, $params)) {
                 return;
             }
 
@@ -307,11 +330,25 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
                 JPATH_ADMINISTRATOR . '/cache',
             ]));
 
+            // Also the article view cache and every module cache group: copies
+            // stored before module/content protection was set up would otherwise
+            // keep being served for their whole lifetime.
             foreach ($bases as $base) {
-                if (is_dir($base)) {
-                    Factory::getContainer()->get(CacheControllerFactoryInterface::class)
-                        ->createCacheController('output', ['defaultgroup' => 'page', 'cachebase' => $base])
-                        ->clean('page');
+                if (!is_dir($base)) {
+                    continue;
+                }
+
+                $controller = Factory::getContainer()->get(CacheControllerFactoryInterface::class)
+                    ->createCacheController('output', ['defaultgroup' => 'page', 'cachebase' => $base]);
+
+                $groups = ['page', 'com_content', 'com_modules', 'com_tags'];
+
+                foreach (glob($base . '/mod_*', GLOB_ONLYDIR) ?: [] as $dir) {
+                    $groups[] = basename($dir);
+                }
+
+                foreach (array_unique($groups) as $group) {
+                    $controller->clean($group);
                 }
             }
         } catch (\Throwable $e) {
@@ -337,6 +374,8 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
         try {
             $params = ProtectionHelper::getParams();
 
+            $this->guardSharedContent($app, $params);
+
             if (!ProtectionHelper::isProtectedRequest($app, $params)) {
                 return;
             }
@@ -346,6 +385,121 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
             // A bug in the protector must never take the site down. Log it and
             // let the page render normally.
             Log::add('cs-page-protector gatekeeper error: ' . $e->getMessage(), Log::ERROR, 'com_cspageprotector');
+        }
+    }
+
+    /**
+     * Protection that applies on pages that aren't themselves protected:
+     * protected modules and protected article text can appear anywhere.
+     *
+     * - Joomla's view and module caches key on the URL, not on who is
+     *   viewing, so they're switched off for the request whenever module or
+     *   content protection is in use.
+     * - com_ajax calls into a protected module's helper are refused.
+     * - com_content feeds that would carry protected articles are refused.
+     *
+     * @param   CMSApplicationInterface  $app     The application.
+     * @param   Registry                 $params  Component params.
+     *
+     * @return  void
+     *
+     * @since   0.1.0
+     */
+    private function guardSharedContent(CMSApplicationInterface $app, Registry $params): void
+    {
+        $hasModules = ProtectionHelper::hasModuleProtection($params);
+        $targets    = ProtectionHelper::getContentTargets($app, $params);
+        $hasContent = $targets['articles'] !== [] || $targets['ranges'] !== [];
+
+        if (!$hasModules && !$hasContent) {
+            return;
+        }
+
+        $app->set('caching', 0);
+
+        $input  = $app->getInput();
+        $option = $input->getCmd('option', '');
+
+        if ($hasModules && $option === 'com_ajax' && $input->getCmd('module', '') !== '') {
+            $type = 'mod_' . preg_replace('/^mod_/', '', $input->getCmd('module', ''));
+
+            if (\in_array($type, ProtectionHelper::getProtectedModuleTypes($params), true) && !ProtectionHelper::visitorHasAccess($app, $params)) {
+                $this->sendBlocked($app);
+            }
+        }
+
+        if (
+            $hasContent
+            && $option === 'com_content'
+            && strtolower($input->getWord('format', 'html')) !== 'html'
+            && ProtectionHelper::feedIncludesProtected($input->getCmd('view', ''), $input->getInt('id', 0), $targets)
+            && !ProtectionHelper::visitorHasAccess($app, $params)
+        ) {
+            $this->sendBlocked($app);
+        }
+    }
+
+    /**
+     * Protected article text shown somewhere other than its own protected
+     * page (a blog or featured list, the archive, a tag list, an articles
+     * module): swap it for a short notice for visitors who haven't passed.
+     *
+     * @param   EventInterface  $event  onContentPrepare (context, article, params, page)
+     *
+     * @return  void
+     *
+     * @since   0.1.0
+     */
+    public function onContentPrepare(EventInterface $event): void
+    {
+        $app = $this->getApplication();
+
+        if (!$this->isActive($app)) {
+            return;
+        }
+
+        $context = (string) ($event->getArgument('context') ?? $event->getArgument(0) ?? '');
+        $article = $event->getArgument('subject') ?? $event->getArgument(1);
+
+        if (!\is_object($article) || !preg_match('/^(com_content|com_tags|mod_articles)/', $context)) {
+            return;
+        }
+
+        try {
+            $params  = ProtectionHelper::getParams();
+            $targets = ProtectionHelper::getContentTargets($app, $params);
+
+            if ($targets['articles'] === [] && $targets['ranges'] === []) {
+                return;
+            }
+
+            // com_tags rows describe the tagged item; only articles matter here.
+            if (isset($article->type_alias) && $article->type_alias !== 'com_content.article') {
+                return;
+            }
+
+            $articleId  = (int) ($article->content_item_id ?? $article->id ?? 0);
+            $categoryId = (int) ($article->core_catid ?? $article->catid ?? 0);
+
+            if (!ProtectionHelper::isProtectedArticle($articleId, $categoryId, $targets) || ProtectionHelper::visitorHasAccess($app, $params)) {
+                return;
+            }
+
+            $notice = '<p class="cspp-content-locked">'
+                . htmlspecialchars(Text::_('PLG_SYSTEM_CSPAGEPROTECTOR_CONTENT_LOCKED'), ENT_QUOTES, 'UTF-8')
+                . '</p>';
+
+            foreach (['text', 'introtext', 'fulltext', 'core_body'] as $field) {
+                if (property_exists($article, $field) || $field === 'text') {
+                    $article->$field = $field === 'fulltext' ? '' : $notice;
+                }
+            }
+        } catch (\Throwable $e) {
+            // Fail closed: never print protected text after an error.
+            $article->text = '';
+            $article->introtext = '';
+            $article->fulltext = '';
+            Log::add('cs-page-protector content gate error: ' . $e->getMessage(), Log::ERROR, 'com_cspageprotector');
         }
     }
 

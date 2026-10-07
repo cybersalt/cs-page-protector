@@ -36,9 +36,25 @@
         <folder>src</folder>
         <folder>tmpl</folder>
     </files>
-    <languages folder="site/language">
-        <language tag="en-GB">en-GB/com_cspageprotector.ini</language>
-    </languages>
+        <languages folder="site/language">
+            <language tag="en-GB">en-GB/com_cspageprotector.ini</language>
+            <language tag="cs-CZ">cs-CZ/com_cspageprotector.ini</language>
+            <language tag="de-DE">de-DE/com_cspageprotector.ini</language>
+            <language tag="el-GR">el-GR/com_cspageprotector.ini</language>
+            <language tag="es-ES">es-ES/com_cspageprotector.ini</language>
+            <language tag="fr-FR">fr-FR/com_cspageprotector.ini</language>
+            <language tag="it-IT">it-IT/com_cspageprotector.ini</language>
+            <language tag="ja-JP">ja-JP/com_cspageprotector.ini</language>
+            <language tag="nb-NO">nb-NO/com_cspageprotector.ini</language>
+            <language tag="nl-NL">nl-NL/com_cspageprotector.ini</language>
+            <language tag="nn-NO">nn-NO/com_cspageprotector.ini</language>
+            <language tag="pl-PL">pl-PL/com_cspageprotector.ini</language>
+            <language tag="pt-BR">pt-BR/com_cspageprotector.ini</language>
+            <language tag="ru-RU">ru-RU/com_cspageprotector.ini</language>
+            <language tag="sv-SE">sv-SE/com_cspageprotector.ini</language>
+            <language tag="tr-TR">tr-TR/com_cspageprotector.ini</language>
+            <language tag="zh-CN">zh-CN/com_cspageprotector.ini</language>
+        </languages>
 
     <media destination="com_cspageprotector" folder="media">
         <filename>joomla.asset.json</filename>
@@ -64,10 +80,42 @@
             <folder>src</folder>
             <folder>tmpl</folder>
         </files>
-        <languages folder="admin/language">
-            <language tag="en-GB">en-GB/com_cspageprotector.ini</language>
-            <language tag="en-GB">en-GB/com_cspageprotector.sys.ini</language>
-        </languages>
+            <languages folder="admin/language">
+                <language tag="en-GB">en-GB/com_cspageprotector.ini</language>
+                <language tag="en-GB">en-GB/com_cspageprotector.sys.ini</language>
+                <language tag="cs-CZ">cs-CZ/com_cspageprotector.ini</language>
+                <language tag="cs-CZ">cs-CZ/com_cspageprotector.sys.ini</language>
+                <language tag="de-DE">de-DE/com_cspageprotector.ini</language>
+                <language tag="de-DE">de-DE/com_cspageprotector.sys.ini</language>
+                <language tag="el-GR">el-GR/com_cspageprotector.ini</language>
+                <language tag="el-GR">el-GR/com_cspageprotector.sys.ini</language>
+                <language tag="es-ES">es-ES/com_cspageprotector.ini</language>
+                <language tag="es-ES">es-ES/com_cspageprotector.sys.ini</language>
+                <language tag="fr-FR">fr-FR/com_cspageprotector.ini</language>
+                <language tag="fr-FR">fr-FR/com_cspageprotector.sys.ini</language>
+                <language tag="it-IT">it-IT/com_cspageprotector.ini</language>
+                <language tag="it-IT">it-IT/com_cspageprotector.sys.ini</language>
+                <language tag="ja-JP">ja-JP/com_cspageprotector.ini</language>
+                <language tag="ja-JP">ja-JP/com_cspageprotector.sys.ini</language>
+                <language tag="nb-NO">nb-NO/com_cspageprotector.ini</language>
+                <language tag="nb-NO">nb-NO/com_cspageprotector.sys.ini</language>
+                <language tag="nl-NL">nl-NL/com_cspageprotector.ini</language>
+                <language tag="nl-NL">nl-NL/com_cspageprotector.sys.ini</language>
+                <language tag="nn-NO">nn-NO/com_cspageprotector.ini</language>
+                <language tag="nn-NO">nn-NO/com_cspageprotector.sys.ini</language>
+                <language tag="pl-PL">pl-PL/com_cspageprotector.ini</language>
+                <language tag="pl-PL">pl-PL/com_cspageprotector.sys.ini</language>
+                <language tag="pt-BR">pt-BR/com_cspageprotector.ini</language>
+                <language tag="pt-BR">pt-BR/com_cspageprotector.sys.ini</language>
+                <language tag="ru-RU">ru-RU/com_cspageprotector.ini</language>
+                <language tag="ru-RU">ru-RU/com_cspageprotector.sys.ini</language>
+                <language tag="sv-SE">sv-SE/com_cspageprotector.ini</language>
+                <language tag="sv-SE">sv-SE/com_cspageprotector.sys.ini</language>
+                <language tag="tr-TR">tr-TR/com_cspageprotector.ini</language>
+                <language tag="tr-TR">tr-TR/com_cspageprotector.sys.ini</language>
+                <language tag="zh-CN">zh-CN/com_cspageprotector.ini</language>
+                <language tag="zh-CN">zh-CN/com_cspageprotector.sys.ini</language>
+            </languages>
     </administration>
 
     <changelogurl>https://raw.githubusercontent.com/cybersalt/cs-page-protector/main/CHANGELOG.html</changelogurl>

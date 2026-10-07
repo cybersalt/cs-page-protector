@@ -14,10 +14,10 @@
         "php": ">=8.1"
     },
     "require-dev": {
-        "joomla/coding-standards": "dev-main"
+        "squizlabs/php_codesniffer": "^3.7"
     },
     "scripts": {
         "lint:php": "find packages -name '*.php' -print0 | xargs -0 -n1 php -l",
-        "lint:phpcs": "phpcs --standard=phpcs.xml packages"
+        "lint:phpcs": "phpcs --standard=phpcs.xml"
     }
 }

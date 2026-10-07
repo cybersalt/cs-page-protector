@@ -38,17 +38,110 @@ final class IpHelper
     public static function getClientIp(Registry $params): string
     {
         $remote = self::valid((string) ($_SERVER['REMOTE_ADDR'] ?? ''));
+        $source = (string) $params->get('ip_source', 'remote_addr');
 
-        $candidate = match ((string) $params->get('ip_source', 'remote_addr')) {
-            'cf_connecting_ip' => (string) ($_SERVER['HTTP_CF_CONNECTING_IP'] ?? ''),
-            'x_real_ip'        => (string) ($_SERVER['HTTP_X_REAL_IP'] ?? ''),
-            // Left-most entry is the original client as reported by the first proxy.
-            'x_forwarded_for'  => trim(explode(',', (string) ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? ''))[0]),
-            default            => '',
+        if ($source === 'remote_addr' || $remote === '') {
+            return $remote;
+        }
+
+        $trustedList = (string) $params->get('trusted_proxies', '');
+        $isTrusted   = static function (string $ip) use ($trustedList, $source): bool {
+            if ($source === 'cf_connecting_ip' && self::isCloudflare($ip)) {
+                return true;
+            }
+
+            if (trim($trustedList) !== '') {
+                return self::matchesList($ip, $trustedList);
+            }
+
+            // No list given: a proxy on the same machine or private network.
+            return self::isPrivate($ip);
         };
 
-        return self::valid($candidate) ?: $remote;
+        // A header is only believed when the connection itself comes from the
+        // proxy that sets it. Otherwise anyone reaching the origin directly
+        // could send their own header and pick an allow-listed address.
+        if (!$isTrusted($remote)) {
+            return $remote;
+        }
+
+        if ($source === 'cf_connecting_ip') {
+            return self::valid((string) ($_SERVER['HTTP_CF_CONNECTING_IP'] ?? '')) ?: $remote;
+        }
+
+        if ($source === 'x_real_ip') {
+            return self::valid((string) ($_SERVER['HTTP_X_REAL_IP'] ?? '')) ?: $remote;
+        }
+
+        if ($source === 'x_forwarded_for') {
+            // Proxies append to whatever the client sent, so the left end is
+            // client-controlled. Walk from the right, skipping our own proxies;
+            // the first address that isn't one of them is the real client.
+            $hops = array_reverse(array_map('trim', explode(',', (string) ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? ''))));
+
+            foreach ($hops as $hop) {
+                $hop = self::valid($hop);
+
+                if ($hop === '' || $isTrusted($hop)) {
+                    continue;
+                }
+
+                return $hop;
+            }
+        }
+
+        return $remote;
     }
+
+    /**
+     * Is the address one of Cloudflare's published edge ranges?
+     * (https://www.cloudflare.com/ips/ — update if Cloudflare adds ranges.)
+     *
+     * @param   string  $ip  Address.
+     *
+     * @return  boolean
+     *
+     * @since   0.1.0
+     */
+    public static function isCloudflare(string $ip): bool
+    {
+        foreach (self::CLOUDFLARE_RANGES as $range) {
+            if (self::matches($ip, $range)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Private, loopback or otherwise reserved address?
+     *
+     * @param   string  $ip  Address.
+     *
+     * @return  boolean
+     *
+     * @since   0.1.0
+     */
+    public static function isPrivate(string $ip): bool
+    {
+        return filter_var($ip, FILTER_VALIDATE_IP) !== false
+            && filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false;
+    }
+
+    /**
+     * Cloudflare edge ranges, IPv4 and IPv6.
+     *
+     * @var    string[]
+     * @since  0.1.0
+     */
+    private const CLOUDFLARE_RANGES = [
+        '173.245.48.0/20', '103.21.244.0/22', '103.22.200.0/22', '103.31.4.0/22', '141.101.64.0/18',
+        '108.162.192.0/18', '190.93.240.0/20', '188.114.96.0/20', '197.234.240.0/22', '198.41.128.0/17',
+        '162.158.0.0/15', '104.16.0.0/13', '104.24.0.0/14', '172.64.0.0/13', '131.0.72.0/22',
+        '2400:cb00::/32', '2606:4700::/32', '2803:f800::/32', '2405:b500::/32', '2405:8100::/32',
+        '2a06:98c0::/29', '2c0f:f248::/32',
+    ];
 
     /**
      * Does the IP match any entry in a newline / comma separated allowlist?

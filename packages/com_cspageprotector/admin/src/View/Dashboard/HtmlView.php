@@ -66,6 +66,10 @@ final class HtmlView extends BaseHtmlView
      */
     public function display($tpl = null): void
     {
+        // Also reached through task=dashboard.display, which skips the
+        // DisplayController check, so the view enforces it itself.
+        PermissionHelper::requireView();
+
         /** @var DashboardModel $model */
         $model = $this->getModel();
 

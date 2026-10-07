@@ -3,15 +3,15 @@
 
     <h2>
         <span class="version-badge">v0.1.0</span>
-        <span class="date">Unreleased (first version, in development)</span>
+        <span class="date">2026-10-07</span>
     </h2>
 
     <h3><span class="section-icon">🚀</span>New</h3>
     <ul>
         <li><strong>Proof-of-work check</strong>: in front of selected menu items, using Joomla 6.1's core Proof-of-Work captcha through Joomla's captcha framework (any installed captcha plugin can be chosen instead).</li>
         <li><strong>Protection modes</strong>: only the selected pages, or every page except the selected ones.</li>
-        <li><strong>Other routes to the same content</strong>: protected content reached through another menu item, a bare <code>index.php</code> link or a forged <code>Itemid</code> is still protected, including articles and subcategories inside a protected category.</li>
-        <li><strong>Protect modules</strong>: not just pages. Pick modules or whole module positions on the new Modules tab. Visitors who haven't passed see a placeholder with a "Show content" button, or nothing at all. Clicking the button runs the check right inside the module and reloads the page with the content; one pass unlocks every protected module. The captcha is never shown inside a module, so a page never has more than one. Pages carrying a protected module are kept out of the page cache. Idea from Bjørn (#3).</li>
+        <li><strong>Other routes to the same content</strong>: protected content reached through another menu item, a bare <code>index.php</code> link or a forged <code>Itemid</code> is still protected, including articles and subcategories inside a protected category. Blog, featured and tag lists and article modules show a short notice in place of a protected article's text, and feeds that would include it get a 403.</li>
+        <li><strong>Protect modules</strong>: not just pages. Pick modules or whole module positions on the new Modules tab. Visitors who haven't passed see a placeholder with a "Show content" button, or nothing at all. Clicking the button runs the check right inside the module and reloads the page with the content; one pass unlocks every protected module. A page never shows more than one captcha. Pages carrying a protected module are kept out of the page cache. Idea from Bjørn (#3).</li>
         <li><strong>In-place challenge</strong>: shown inside the site template at the same URL. It starts and continues automatically, so a real visitor waits about half a second.</li>
         <li><strong>Site-wide pass</strong>: a signed cookie (HMAC, bound to the browser and optionally the IP) with a configurable lifetime. Admins get "Reset all passes", plus "Clear my pass" for testing in their own browser.</li>
         <li><strong>Exemptions</strong>: logged-in users or chosen user groups, IP and CIDR allow-list, and search engines verified by forward-confirmed reverse DNS.</li>
@@ -21,6 +21,7 @@
         <li><strong>Event log</strong>: a filter for every column, full-width detail rows, CSV download, text dump, delete selected and Clear All.</li>
         <li><strong>Click-to-copy</strong>: on IP addresses; with shortened IPs it copies the firewall-ready range (<code>/24</code> for IPv4, <code>/48</code> for IPv6).</li>
         <li><strong>Polish</strong>: branded Options tabs, post-install card, custom ACL actions for viewing and managing the log.</li>
+        <li><strong>Languages</strong>: 17 languages: English, Dutch, German, Swedish, Norwegian (Bokmål and Nynorsk), Spanish, French, Italian, Brazilian Portuguese, Russian, Polish, Czech, Greek, Japanese, Simplified Chinese and Turkish.</li>
     </ul>
 
     <h3><span class="section-icon">🔍</span>Security / Privacy</h3>
@@ -28,8 +29,11 @@
         <li><strong>IP shortening on by default (GDPR-friendly)</strong>: the log stores only the network part of each address. Saving Options with it on also shortens any full addresses already in the log. Protection still uses the full address during the request.</li>
         <li><strong>Clean front end</strong>: no vendor or support mentions anywhere in front-end output.</li>
         <li><strong>Access control</strong>: ACL gate on every admin controller method; CSRF token on every state-changing action.</li>
-        <li><strong>No open redirect</strong>: the return URL after the check is restricted to the same site.</li>
-        <li><strong>Proxy headers</strong>: trusted only when explicitly configured.</li>
+        <li><strong>No open redirect</strong>: the return URL after the check is restricted to the same site, matching host and port exactly.</li>
+        <li><strong>Proxy headers</strong>: only believed when the request comes from Cloudflare's address ranges or from a listed trusted proxy, and X-Forwarded-For is read from the right, so a forged header can't impersonate an allow-listed IP.</li>
+        <li><strong>"Every page except" mode</strong>: only leaves open exactly what was excluded; an article outside an excluded category is still checked, whatever <code>Itemid</code> is sent.</li>
+        <li><strong>No cached or AJAX leaks</strong>: Joomla's view and module caches are bypassed while modules or content are protected, and AJAX calls into protected module types are refused.</li>
+        <li><strong>Search engine verification</strong>: rate-limited, with failures cached per network, so fake crawler user agents can't flood DNS lookups.</li>
         <li><strong>CSV export</strong>: neutralises spreadsheet formulas in scraper-supplied values.</li>
     </ul>
 </div>

@@ -30,9 +30,8 @@ jobs:
       - name: Composer dev dependencies
         run: composer install --no-interaction --prefer-dist --no-progress
 
-      - name: PHP_CodeSniffer (Joomla standard)
+      - name: PHP_CodeSniffer (PSR-12, Joomla exclusions)
         run: vendor/bin/phpcs --standard=phpcs.xml packages
-        continue-on-error: true
 
   structure:
     name: Manifests, encoding, structure
@@ -41,7 +40,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Validate XML
-        run: find packages -name '*.xml' -print0 | xargs -0 -n1 xmllint --noout
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq libxml2-utils > /dev/null
+          find packages -name '*.xml' -print0 | xargs -0 -n1 xmllint --noout
 
       - name: Validate joomla.asset.json
         run: python3 -m json.tool packages/com_cspageprotector/media/joomla.asset.json > /dev/null

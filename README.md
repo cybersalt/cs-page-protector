@@ -10,13 +10,14 @@ A real visitor sees a short "Checking your browser" step once. Their browser sol
 
 - **Protect by menu item.** Pick the menu items to protect, or protect the whole site and pick the ones to leave open.
 - **Protect modules too.** Pick modules or whole module positions (a footer with contact details, a price list in a sidebar). Visitors who haven't passed see a "Show content" placeholder or nothing at all, on every page the module appears on. Only one captcha is ever shown per page.
-- **Catches other routes to the same content.** A protected article reached through a different menu item or a bare `index.php` link is still protected, and so is anything inside a protected category.
+- **Catches other routes to the same content.** A protected article reached through a different menu item or a bare `index.php` link is still protected, and so is anything inside a protected category. Blog and featured lists, tag lists and article modules show a short notice in place of its text, and feeds that would include it are refused.
 - **Uses Joomla's own captcha system.** Joomla 6.1's core Proof-of-Work captcha is the default: no third-party service, nothing to click. Any other installed Joomla captcha plugin can be used instead, and more challenge options are planned.
 - **Visitors see your own template.** The URL and menu item stay the same and the check shows inside the site's normal template, then sends the visitor back to the page they asked for.
 - **One pass covers the site.** The pass is a signed cookie tied to the browser (and, if you want, the IP). You can reset every pass at once from the dashboard.
 - **Sensible exemptions.** Logged-in users or chosen user groups, allow-listed IPs and CIDR ranges, and verified search engines (Google, Bing, Apple, Yandex, Baidu, Yahoo). Search engines are checked with forward-confirmed reverse DNS, so a scraper that only claims to be Googlebot is still challenged. AI crawlers such as GPTBot and ClaudeBot are not exempt.
 - **Feeds and JSON can't leak content.** Non-HTML requests for protected pages get a plain 403 instead of the content.
-- **Kept out of caches.** Protected pages are excluded from Joomla's page cache and sent with no-store headers.
+- **Kept out of caches.** Protected pages are excluded from Joomla's page cache and sent with no-store headers. While modules or content are protected, Joomla's view and module caches are bypassed so a cached copy never reaches a visitor who hasn't passed.
+- **17 languages** out of the box (English plus Dutch, German, Swedish, Norwegian Bokmål and Nynorsk, Spanish, French, Italian, Brazilian Portuguese, Russian, Polish, Czech, Greek, Japanese, Simplified Chinese and Turkish).
 - **Dashboard and event log.** Health checks, 24-hour stats, the most-challenged IPs (copy one to block it at your firewall), and a full event log with filters, CSV download and a text dump for support tickets.
 
 ## Requirements
@@ -27,9 +28,11 @@ A real visitor sees a short "Checking your browser" step once. Their browser sol
 
 ## Installation
 
-1. Download `pkg_cspageprotector_v*.zip` from the [releases page](https://github.com/cybersalt/cs-page-protector/releases).
+1. Download the latest `pkg_cspageprotector_v*.zip` from [cybersalt.com](https://www.cybersalt.com/extensions/page-protector) or the [GitHub releases page](https://github.com/cybersalt/cs-page-protector/releases).
 2. In Joomla, go to **System → Install → Extensions** and upload the zip.
 3. The installer enables the gatekeeper plugin and, on Joomla 6.1+, switches on the core **CAPTCHA - Proof of Work** plugin so the check can run. Enabling it only makes it available; it doesn't change the captcha your other forms use.
+
+Updates arrive through Joomla's normal update manager (**System → Update → Extensions**).
 
 ## Configuration
 
@@ -40,20 +43,24 @@ A real visitor sees a short "Checking your browser" step once. Their browser sol
 | Protection | Protect selected pages or everything except selected pages; the menu item picker; "also catch other routes to the same content". |
 | Modules | Protected modules and module positions; placeholder or hide; placeholder text and button label. |
 | Challenge | Captcha plugin, what to do if it's unavailable, auto-start and auto-continue, how long a pass lasts, tie pass to IP, HTTP status of the check page, heading and message. |
-| Exemptions | Logged-in users, user groups, verified search engines, allow-listed IPs, and where the visitor IP comes from (direct, Cloudflare, X-Forwarded-For, X-Real-IP). |
+| Exemptions | Logged-in users, user groups, verified search engines, allow-listed IPs, where the visitor IP comes from (direct, Cloudflare, X-Forwarded-For, X-Real-IP) and which proxies to trust. |
 | Logging | Event log on/off, shorten IPs (on by default, GDPR-friendly), retention days. |
 | Support | Support email, page and name shown on the dashboard. Nothing support-related is ever shown to site visitors. |
 | Permissions | Who can view the dashboard and log, and who can delete log entries. |
 
 The difficulty of the proof-of-work puzzle is set in the **CAPTCHA - Proof of Work** plugin's own settings (Easy / Moderate / Hard / Custom).
 
-**Behind Cloudflare or another proxy?** Set *Visitor IP comes from* to match, otherwise every visitor looks like the proxy's IP. The dashboard warns you if it spots Cloudflare headers.
+**Behind Cloudflare or another proxy?** Set *Visitor IP comes from* to match, otherwise every visitor looks like the proxy's IP. The dashboard warns you if it spots Cloudflare headers. The header is only believed when the request really comes from the proxy: Cloudflare's published address ranges for Cloudflare, or the addresses you list under *Trusted proxies* for the others (a proxy on the same server or a private network is trusted when that list is empty). Anyone else sending the header is ignored, so nobody can fake an allow-listed address.
 
 ## What it can and can't do
 
 Proof of work raises the cost of scraping; it doesn't make scraping impossible. A determined scraper running a real headless browser can solve the puzzle. It just has to pay for it on every pass it collects, and every pass is tied to its browser fingerprint. Pair it with firewall blocks on the IPs the dashboard flags.
 
-Protection is by menu item and by module. Content a visitor can reach with no menu item at all isn't covered.
+Some things it doesn't cover:
+
+- **Smart Search snippets.** Joomla stores a short extract of each article when Smart Search indexes it, and search results can show that extract.
+- **Third-party lists.** Joomla's own blog, featured, tag and category lists, article modules and feeds are covered. A third-party extension that lists articles without running Joomla's content events may still show their text.
+- **Caching cost.** While modules or content are protected, Joomla's view and module caches are switched off for every request, so a site that leans on those caches will do more work per page.
 
 ## How it works
 

@@ -83,7 +83,8 @@ final class HtmlView extends BaseHtmlView
                 'module'
             );
         }
-        $this->returnB64  = $input->getBase64('cspp_return', '') ?: base64_encode(Uri::root());
+        $decoded          = base64_decode($input->getBase64('cspp_return', ''), true);
+        $this->returnB64  = base64_encode(ProtectionHelper::safeReturnUrl(\is_string($decoded) ? $decoded : ''));
         $this->autoStart  = (int) $params->get('auto_start', 1) === 1;
         $this->autoSubmit = (int) $params->get('auto_submit', 1) === 1;
         $this->formAction = Route::_('index.php?option=com_cspageprotector&task=challenge.verify' . ($this->itemId ? '&Itemid=' . $this->itemId : ''));

@@ -89,26 +89,101 @@ final class BotVerifier
             return false;
         }
 
-        $cacheId = 'bot_' . hash('sha256', $ip . '|' . implode(',', $suffixes));
-        $cache   = self::getCache();
+        $cache = self::getCache();
 
-        if ($cache !== null) {
-            $cached = $cache->get($cacheId);
+        // DNS lookups block a PHP worker and can't be given a timeout, so they
+        // must not be free for an attacker to trigger: a hostile reverse-DNS
+        // zone can make each one hang for many seconds.
+        if ($cache === null) {
+            return false;
+        }
 
-            if ($cached === '1' || $cached === '0') {
-                return $cached === '1';
-            }
+        $ipKey     = 'bot_ip_' . hash('sha256', $ip . '|' . implode(',', $suffixes));
+        $prefixKey = 'bot_net_' . hash('sha256', self::networkPrefix($ip) . '|' . implode(',', $suffixes));
+
+        $cached = $cache->get($ipKey);
+
+        if ($cached === '1' || $cached === '0') {
+            return $cached === '1';
+        }
+
+        // A failure is remembered for the whole /24 (IPv4) or /64 (IPv6), so
+        // rotating through addresses in one block doesn't buy fresh lookups.
+        if ($cache->get($prefixKey) === '0') {
+            return false;
+        }
+
+        if (!self::takeLookupBudget($cache)) {
+            // Over the per-minute budget: no lookup, the visitor just gets the
+            // normal check (a real crawler simply tries again later).
+            return false;
         }
 
         $verified = self::forwardConfirmedReverseDns($ip, $suffixes);
 
         try {
-            $cache?->store($verified ? '1' : '0', $cacheId);
+            $cache->store($verified ? '1' : '0', $ipKey);
+
+            if (!$verified) {
+                $cache->store('0', $prefixKey);
+            }
         } catch (\Throwable $e) {
-            // A cache write failure only costs us a repeat DNS lookup next time.
+            // A cache write failure only costs us a repeat lookup next time.
         }
 
         return $verified;
+    }
+
+    /**
+     * Uncached lookups allowed per minute, across the whole site.
+     */
+    private const LOOKUPS_PER_MINUTE = 20;
+
+    /**
+     * Count one uncached lookup against this minute's budget.
+     *
+     * @param   object  $cache  Output cache controller.
+     *
+     * @return  boolean  False when the budget is spent.
+     *
+     * @since   0.1.0
+     */
+    private static function takeLookupBudget(object $cache): bool
+    {
+        $key  = 'bot_budget_' . intdiv(time(), 60);
+        $used = (int) $cache->get($key);
+
+        if ($used >= self::LOOKUPS_PER_MINUTE) {
+            return false;
+        }
+
+        try {
+            $cache->store((string) ($used + 1), $key);
+        } catch (\Throwable $e) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Network block of an address: /24 for IPv4, /64 for IPv6.
+     *
+     * @param   string  $ip  Address.
+     *
+     * @return  string
+     *
+     * @since   0.1.0
+     */
+    private static function networkPrefix(string $ip): string
+    {
+        $bin = @inet_pton($ip);
+
+        if ($bin === false) {
+            return $ip;
+        }
+
+        return bin2hex(\strlen($bin) === 4 ? substr($bin, 0, 3) : substr($bin, 0, 8));
     }
 
     /**

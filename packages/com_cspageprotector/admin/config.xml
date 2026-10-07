@@ -333,6 +333,17 @@
             <option value="x_forwarded_for">COM_CSPAGEPROTECTOR_FIELD_IP_SOURCE_XFF</option>
             <option value="x_real_ip">COM_CSPAGEPROTECTOR_FIELD_IP_SOURCE_X_REAL_IP</option>
         </field>
+
+        <field
+            name="trusted_proxies"
+            type="textarea"
+            label="COM_CSPAGEPROTECTOR_FIELD_TRUSTED_PROXIES_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_TRUSTED_PROXIES_DESC"
+            hint="COM_CSPAGEPROTECTOR_FIELD_TRUSTED_PROXIES_HINT"
+            rows="3"
+            filter="string"
+            showon="ip_source!:remote_addr"
+        />
     </fieldset>
 
     <fieldset

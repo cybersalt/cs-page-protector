@@ -144,7 +144,8 @@ foreach ($ext in $childExtensions) {
 # 2. Copy package manifest + script + language into staging root.
 Copy-Item $pkgManifest (Join-Path $pkgStage "pkg_cspageprotector.xml")
 Copy-Item (Join-Path $pkgDir "script.php") (Join-Path $pkgStage "script.php")
-Copy-Item (Join-Path $pkgDir "language\en-GB\pkg_cspageprotector.sys.ini") (Join-Path $pkgStage "language\en-GB\pkg_cspageprotector.sys.ini")
+Remove-Item (Join-Path $pkgStage "language") -Recurse -Force
+Copy-Item (Join-Path $pkgDir "language") (Join-Path $pkgStage "language") -Recurse
 
 # 3. Zip the whole package.
 Push-Location $pkgStage
@@ -160,11 +161,10 @@ Remove-Item $pkgStage -Recurse -Force
 $sizeKb = [Math]::Round((Get-Item $pkgZipPath).Length / 1KB, 1)
 Write-Host "Created $pkgZipName ($sizeKb KB)" -ForegroundColor Green
 
-# 4. Report sha256 so the user can paste it into updates.xml
+# 4. Report sha256 to check against the one Release Manager computes on upload.
+#    Updates are served by cs-Release-Manager on cybersalt.com, not an updates.xml.
 $sha256 = (Get-FileHash $pkgZipPath -Algorithm SHA256).Hash.ToLower()
 Write-Host "SHA256: $sha256" -ForegroundColor Yellow
 Write-Host ""
-Write-Host "Update updates.xml with:" -ForegroundColor Gray
-Write-Host "  <version>$Version</version>" -ForegroundColor Gray
-Write-Host "  <sha256>$sha256</sha256>" -ForegroundColor Gray
-Write-Host "  <downloadurl>https://github.com/cybersalt/cs-page-protector/releases/download/v$Version/$pkgZipName</downloadurl>" -ForegroundColor Gray
+Write-Host "To release: copy to pkg_cspageprotector_v$Version.zip, attach it to the GitHub release," -ForegroundColor Gray
+Write-Host "then upload it to cs-Release-Manager (element pkg_cspageprotector)." -ForegroundColor Gray

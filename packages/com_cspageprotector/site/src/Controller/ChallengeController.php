@@ -62,7 +62,7 @@ final class ChallengeController extends BaseController
 
         $ip          = IpHelper::getClientIp($params);
         $userAgent   = $this->input->server->getString('HTTP_USER_AGENT', '');
-        $menuItemId  = $this->input->post->getInt('cspp_item', 0);
+        $menuItemId  = max(0, $this->input->post->getInt('cspp_item', 0));
         $captchaName = CaptchaHelper::getConfiguredPlugin($params);
         $captcha     = CaptchaHelper::getInstance($captchaName);
 
@@ -100,8 +100,7 @@ final class ChallengeController extends BaseController
     }
 
     /**
-     * Decode and validate the return URL. Only same-site URLs are accepted, so
-     * the form can't be abused as an open redirect.
+     * Decode the posted return URL and keep it on this site (no open redirect).
      *
      * @param   string  $encoded  Base64 URL.
      *
@@ -111,18 +110,8 @@ final class ChallengeController extends BaseController
      */
     private static function safeReturnUrl(string $encoded): string
     {
-        $fallback = Uri::root();
-        $url      = $encoded !== '' ? base64_decode($encoded, true) : false;
+        $url = $encoded !== '' ? base64_decode($encoded, true) : false;
 
-        if (!\is_string($url) || $url === '' || preg_match('/[\x00-\x1F\x7F]/', $url)) {
-            return $fallback;
-        }
-
-        // Protocol-relative and backslash tricks ("//evil.tld", "/\evil.tld").
-        if (str_starts_with($url, '//') || str_starts_with($url, '/\\') || str_contains($url, '\\')) {
-            return $fallback;
-        }
-
-        return Uri::isInternal($url) ? $url : $fallback;
+        return ProtectionHelper::safeReturnUrl(\is_string($url) ? $url : '');
     }
 }

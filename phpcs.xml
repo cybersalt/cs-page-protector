@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <ruleset name="cs-page-protector">
-    <description>cs-page-protector PHP_CodeSniffer ruleset — Joomla coding standards with project overrides.</description>
+    <description>cs-page-protector PHP_CodeSniffer ruleset: PSR-12, as Joomla 4+ core uses, with Joomla's usual exclusions.</description>
 
     <file>packages</file>
 
@@ -12,11 +12,11 @@
     <arg name="colors"/>
     <arg value="ps"/>
 
-    <rule ref="Joomla">
-        <!-- We use declare(strict_types=1) in some files; Joomla standard doesn't require it. -->
-        <exclude name="Squiz.Commenting.FileComment.Missing"/>
-        <!-- Allow short array syntax which is the project convention. -->
-        <exclude name="Generic.Arrays.DisallowShortArraySyntax.Found"/>
+    <rule ref="PSR12">
+        <!-- Every Joomla file starts with the _JEXEC guard. -->
+        <exclude name="PSR1.Files.SideEffects"/>
+        <!-- Language-heavy templates and SQL read better unwrapped. -->
+        <exclude name="Generic.Files.LineLength"/>
     </rule>
 
     <rule ref="Generic.PHP.Syntax"/>

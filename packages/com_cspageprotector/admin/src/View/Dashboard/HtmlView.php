@@ -37,6 +37,12 @@ final class HtmlView extends BaseHtmlView
     public $protectedItems = [];
 
     /** @var object[] */
+    public $protectedModules = [];
+
+    /** @var string */
+    public $modulesOptionsUrl = '';
+
+    /** @var object[] */
     public $topIps = [];
 
     /** @var object[] */
@@ -66,6 +72,8 @@ final class HtmlView extends BaseHtmlView
         $this->checks         = $model->getChecks();
         $this->stats          = $model->getStats();
         $this->protectedItems = $model->getProtectedItems();
+        $this->protectedModules  = $model->getProtectedModules();
+        $this->modulesOptionsUrl = $model->optionsUrl('modules');
         $this->topIps         = $model->getTopIps();
         $this->recent         = $model->getRecent();
         $this->optionsUrl     = $model->optionsUrl();

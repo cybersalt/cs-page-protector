@@ -64,7 +64,7 @@ One version number per unreleased cycle. Rebuilds keep the same version, and the
 
 ## Credit people in the changelog (Tim, 2026-10-07)
 
-When an issue or idea from someone is acted on, the changelog entry that ships it names them, in both `CHANGELOG.md` and `CHANGELOG.html`. Format: end the bullet with `Idea from Bjørn (#4).` (or `Suggested by …` / `Reported by …`), and for joint ideas `Ideas from Bjørn and Julie (#1).` Credit only what actually shipped, in the release that ships it. The person who suggested an issue is named in its body ("Idea from …") or in a comment; check both before writing the entry.
+When an issue or idea from someone is acted on, the changelog entry that ships it names them by **first name only** (Tim, 2026-10-07), in both `CHANGELOG.md` and `CHANGELOG.html`. Format: end the bullet with `Idea from Bjørn (#4).` (or `Suggested by …` / `Reported by …`), and for joint ideas `Ideas from Bjørn and Julie (#1).` Credit only what actually shipped, in the release that ships it. The person who suggested an issue is named in its body ("Idea from …") or in a comment; check both before writing the entry.
 
 Credits map for the open issues (keep this updated as issues are filed):
 
@@ -75,3 +75,11 @@ Credits map for the open issues (keep this updated as issues are filed):
 | #4 Partial email cloaking | Bjørn, building on Julie's visual obfuscation idea |
 | #5 Warn when no captcha is available | Bjørn (question) |
 | #2, #6, #7, #8, #9, #10, #11 | Tim (no credit line needed) |
+
+## Module protection (#3, Bjørn)
+
+- `onAfterModuleList` drops protected modules (hide mode, and always on the challenge page so there's never a second captcha). `onRenderModule` swaps content for the placeholder *before* chrome, so the module keeps its title/box. Both Joomla 5.4 and 6.1 read the list back with `getArgument('modules')` after dispatch.
+- The placeholder links to `index.php?option=com_cspageprotector&view=challenge&tmpl=component&cspp_return=<b64>` (plain non-SEF so the base64 survives). `tmpl=component` matters: without it the check renders inside the page's full layout (hero, other modules) and looks like the page asking a second time (Tim hit this on j6.basicjoomla.com/stageit). The challenge view logs those as `challenged` with details `module`; in-place page challenges set `cspp_inplace=1` so they aren't logged twice.
+- Pages with a protected module answer `onPageCacheIsExcluded` → never stored in the page cache. Saving Options cleans the `page` cache group.
+- **Gotcha: Joomla 6 keeps the site cache in `administrator/cache`** (J5: `/cache`). Clean both. Also, when testing with direct DB edits and global caching on, component params come from the `_system` cache; clear it (`php cli/joomla.php cache:clean`) or results look like leaks that aren't there.
+- **Inline module check (Tim's expectation):** clicking "Show content" must run the check *inside the module* and just reload the page, not send the visitor to another screen. `renderModulePlaceholder()` prints a small verify form per placeholder plus, once per page, the PoW widget inside an inert `<template>`; `media/js/module.js` clones it into the clicked box only (one captcha per page), solves, copies `event.detail.payload` into the form (ALTCHA race) and submits. Non-PoW captchas and no-JS fall back to the `tmpl=component` check page.

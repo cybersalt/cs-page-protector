@@ -75,14 +75,16 @@ final class ChallengeController extends BaseController
 
         $raw    = $this->input->post->get(CaptchaHelper::FIELD_NAME, '', 'raw');
         $answer = \is_string($raw) ? substr($raw, 0, self::MAX_ANSWER_BYTES) : '';
-        $detail = '';
+        // Where the check was started: a protected module's inline check, or the page check.
+        $source = $this->input->post->getCmd('cspp_source', '') === 'module' ? 'module' : '';
+        $detail = $source;
 
         try {
             // Legacy captcha plugins read their own POST field when given null.
             $passed = (bool) $captcha->checkAnswer($answer !== '' ? $answer : null);
         } catch (\Throwable $e) {
             $passed = false;
-            $detail = mb_substr($e->getMessage(), 0, 200);
+            $detail = trim($source . ' ' . mb_substr($e->getMessage(), 0, 200));
             Log::add('cs-page-protector captcha check threw: ' . $e->getMessage(), Log::WARNING, 'com_cspageprotector');
         }
 
@@ -94,7 +96,7 @@ final class ChallengeController extends BaseController
         }
 
         VerificationHelper::markVerified($this->app, $params, $ip, $userAgent);
-        LogHelper::log($params, LogHelper::EVENT_PASSED, $ip, $userAgent, $returnUrl, $menuItemId, $captchaName);
+        LogHelper::log($params, LogHelper::EVENT_PASSED, $ip, $userAgent, $returnUrl, $menuItemId, $captchaName, $source);
     }
 
     /**

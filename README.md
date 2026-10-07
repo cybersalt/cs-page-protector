@@ -9,6 +9,7 @@ A real visitor sees a short "Checking your browser" step once. Their browser sol
 ## What it does
 
 - **Protect by menu item.** Pick the menu items to protect, or protect the whole site and pick the ones to leave open.
+- **Protect modules too.** Pick modules or whole module positions (a footer with contact details, a price list in a sidebar). Visitors who haven't passed see a "Show content" placeholder or nothing at all, on every page the module appears on. Only one captcha is ever shown per page.
 - **Catches other routes to the same content.** A protected article reached through a different menu item or a bare `index.php` link is still protected, and so is anything inside a protected category.
 - **Uses Joomla's own captcha system.** Joomla 6.1's core Proof-of-Work captcha is the default: no third-party service, nothing to click. Any other installed Joomla captcha plugin can be used instead, and more challenge options are planned.
 - **Visitors see your own template.** The URL and menu item stay the same and the check shows inside the site's normal template, then sends the visitor back to the page they asked for.
@@ -37,6 +38,7 @@ A real visitor sees a short "Checking your browser" step once. Their browser sol
 | Tab | What's there |
 |---|---|
 | Protection | Protect selected pages or everything except selected pages; the menu item picker; "also catch other routes to the same content". |
+| Modules | Protected modules and module positions; placeholder or hide; placeholder text and button label. |
 | Challenge | Captcha plugin, what to do if it's unavailable, auto-start and auto-continue, how long a pass lasts, tie pass to IP, HTTP status of the check page, heading and message. |
 | Exemptions | Logged-in users, user groups, verified search engines, allow-listed IPs, and where the visitor IP comes from (direct, Cloudflare, X-Forwarded-For, X-Real-IP). |
 | Logging | Event log on/off, shorten IPs (on by default, GDPR-friendly), retention days. |
@@ -51,7 +53,7 @@ The difficulty of the proof-of-work puzzle is set in the **CAPTCHA - Proof of Wo
 
 Proof of work raises the cost of scraping; it doesn't make scraping impossible. A determined scraper running a real headless browser can solve the puzzle. It just has to pay for it on every pass it collects, and every pass is tied to its browser fingerprint. Pair it with firewall blocks on the IPs the dashboard flags.
 
-Protection is by menu item. Content that a visitor can reach with no menu item at all, or that's shown in a module on an unprotected page, isn't covered.
+Protection is by menu item and by module. Content a visitor can reach with no menu item at all isn't covered.
 
 ## How it works
 

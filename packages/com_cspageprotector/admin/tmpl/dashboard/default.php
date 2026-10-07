@@ -168,6 +168,55 @@ $supportUrl   = SupportHelper::getUrl();
                         </table>
                     <?php endif; ?>
                 </div>
+
+                <div class="card-header d-flex justify-content-between align-items-center border-top">
+                    <h2 class="h5 mb-0"><?php echo $this->escape(Text::_('COM_CSPAGEPROTECTOR_DASHBOARD_PROTECTED_MODULES')); ?></h2>
+                    <a class="btn btn-sm btn-secondary" href="<?php echo $this->escape($this->modulesOptionsUrl); ?>">
+                        <span class="icon-options" aria-hidden="true"></span>
+                        <?php echo $this->escape(Text::_('COM_CSPAGEPROTECTOR_CHOOSE_MODULES')); ?>
+                    </a>
+                </div>
+                <div class="card-body p-0">
+                    <?php if (!$this->protectedModules) : ?>
+                        <p class="m-3 text-body-secondary"><?php echo $this->escape(Text::_('COM_CSPAGEPROTECTOR_DASHBOARD_NO_MODULES')); ?></p>
+                    <?php else : ?>
+                        <table class="table table-sm mb-0">
+                            <caption class="visually-hidden"><?php echo $this->escape(Text::_('COM_CSPAGEPROTECTOR_DASHBOARD_PROTECTED_MODULES')); ?></caption>
+                            <thead>
+                                <tr>
+                                    <th scope="col"><?php echo $this->escape(Text::_('COM_CSPAGEPROTECTOR_HEADING_MODULE')); ?></th>
+                                    <th scope="col"><?php echo $this->escape(Text::_('COM_CSPAGEPROTECTOR_HEADING_POSITION')); ?></th>
+                                    <th scope="col" class="text-end"><?php echo $this->escape(Text::_('COM_CSPAGEPROTECTOR_HEADING_ACTIONS')); ?></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($this->protectedModules as $module) : ?>
+                                    <tr>
+                                        <td>
+                                            <?php echo $this->escape($module->title); ?>
+                                            <small class="text-body-secondary">(<?php echo $this->escape($module->module); ?>)</small>
+                                            <?php if ((int) $module->published === 0) : ?>
+                                                <span class="badge bg-secondary"><?php echo $this->escape(Text::_('JUNPUBLISHED')); ?></span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td>
+                                            <?php echo $this->escape($module->position !== '' ? $module->position : Text::_('COM_CSPAGEPROTECTOR_NO_POSITION')); ?>
+                                            <?php if ($module->by_position) : ?>
+                                                <span class="badge bg-secondary"><?php echo $this->escape(Text::_('COM_CSPAGEPROTECTOR_PROTECTED_BY_POSITION')); ?></span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td class="text-end text-nowrap">
+                                            <a class="btn btn-sm btn-secondary" href="<?php echo $this->escape($module->edit_url); ?>">
+                                                <span class="icon-edit" aria-hidden="true"></span>
+                                                <?php echo $this->escape(Text::_('COM_CSPAGEPROTECTOR_EDIT_MENU_ITEM')); ?>
+                                            </a>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    <?php endif; ?>
+                </div>
             </div>
         </div>
 

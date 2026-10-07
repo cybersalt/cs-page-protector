@@ -1,0 +1,37 @@
+/*
+ * Cybersalt Page Protector - placeholder shown in place of a protected
+ * module's content. Layout only; colours and fonts come from the template.
+ */
+
+.cspp-module-locked {
+    padding: 0.75rem 0;
+}
+
+.cspp-module-locked-text {
+    margin: 0 0 0.5rem;
+    font-size: 0.95em;
+    opacity: 0.85;
+}
+
+.cspp-module-locked-captcha:empty {
+    display: none;
+}
+
+.cspp-module-locked-captcha {
+    margin-bottom: 0.5rem;
+}
+
+.cspp-module-locked-status {
+    min-height: 1.2em;
+    margin: 0.4rem 0 0;
+    font-size: 0.9em;
+}
+
+.cspp-module-locked-status:empty {
+    display: none;
+}
+
+.cspp-module-locked-button.disabled {
+    pointer-events: none;
+    opacity: 0.6;
+}

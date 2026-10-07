@@ -52,6 +52,73 @@
     </fieldset>
 
     <fieldset
+        name="modules"
+        label="COM_CSPAGEPROTECTOR_FIELDSET_MODULES"
+        description="COM_CSPAGEPROTECTOR_FIELDSET_MODULES_DESC"
+        addfieldprefix="Cybersalt\Component\Cspageprotector\Administrator\Field"
+    >
+        <field
+            name="brand_modules"
+            type="Brandheader"
+            subtitle="COM_CSPAGEPROTECTOR_FIELDSET_MODULES_SUBTITLE"
+        />
+
+        <field
+            name="protect_modules"
+            type="Sitemodules"
+            label="COM_CSPAGEPROTECTOR_FIELD_PROTECT_MODULES_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_PROTECT_MODULES_DESC"
+            multiple="true"
+            layout="joomla.form.field.groupedlist-fancy-select"
+            filter="intarray"
+        />
+
+        <field
+            name="protect_positions"
+            type="Modulepositions"
+            label="COM_CSPAGEPROTECTOR_FIELD_PROTECT_POSITIONS_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_PROTECT_POSITIONS_DESC"
+            multiple="true"
+            layout="joomla.form.field.list-fancy-select"
+            filter="array"
+        />
+
+        <field
+            name="module_mode"
+            type="list"
+            label="COM_CSPAGEPROTECTOR_FIELD_MODULE_MODE_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_MODULE_MODE_DESC"
+            default="placeholder"
+            validate="options"
+        >
+            <option value="placeholder">COM_CSPAGEPROTECTOR_FIELD_MODULE_MODE_PLACEHOLDER</option>
+            <option value="hide">COM_CSPAGEPROTECTOR_FIELD_MODULE_MODE_HIDE</option>
+        </field>
+
+        <field
+            name="module_placeholder_text"
+            type="text"
+            label="COM_CSPAGEPROTECTOR_FIELD_MODULE_PLACEHOLDER_TEXT_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_MODULE_PLACEHOLDER_TEXT_DESC"
+            hint="COM_CSPAGEPROTECTOR_MODULE_LOCKED_TEXT_DEFAULT"
+            filter="string"
+            maxlength="300"
+            showon="module_mode:placeholder"
+        />
+
+        <field
+            name="module_placeholder_button"
+            type="text"
+            label="COM_CSPAGEPROTECTOR_FIELD_MODULE_PLACEHOLDER_BUTTON_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_MODULE_PLACEHOLDER_BUTTON_DESC"
+            hint="COM_CSPAGEPROTECTOR_MODULE_LOCKED_BUTTON_DEFAULT"
+            filter="string"
+            maxlength="60"
+            showon="module_mode:placeholder"
+        />
+    </fieldset>
+
+    <fieldset
         name="challenge"
         label="COM_CSPAGEPROTECTOR_FIELDSET_CHALLENGE"
         description="COM_CSPAGEPROTECTOR_FIELDSET_CHALLENGE_DESC"

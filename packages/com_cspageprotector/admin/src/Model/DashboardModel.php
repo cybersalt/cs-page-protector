@@ -86,9 +86,23 @@ final class DashboardModel extends BaseDatabaseModel
         if ((string) $params->get('protection_mode', 'selected') === ProtectionHelper::MODE_ALL_EXCEPT) {
             $checks[] = $this->check('info', Text::plural('COM_CSPAGEPROTECTOR_CHECK_MODE_ALL_EXCEPT_N', $count), $this->optionsUrl('protection'), Text::_('COM_CSPAGEPROTECTOR_CHECK_CHOOSE_PAGES'));
         } elseif ($count === 0) {
-            $checks[] = $this->check('warning', Text::_('COM_CSPAGEPROTECTOR_CHECK_NO_PAGES'), $this->optionsUrl('protection'), Text::_('COM_CSPAGEPROTECTOR_CHECK_CHOOSE_PAGES'));
+            // Only a warning when nothing at all is protected; protecting just
+            // modules is a deliberate setup, so then it is only a note.
+            $checks[] = ProtectionHelper::hasModuleProtection($params)
+                ? $this->check('info', Text::_('COM_CSPAGEPROTECTOR_CHECK_NO_PAGES_MODULES_ONLY'), $this->optionsUrl('protection'), Text::_('COM_CSPAGEPROTECTOR_CHECK_CHOOSE_PAGES'))
+                : $this->check('warning', Text::_('COM_CSPAGEPROTECTOR_CHECK_NO_PAGES'), $this->optionsUrl('protection'), Text::_('COM_CSPAGEPROTECTOR_CHECK_CHOOSE_PAGES'));
         } else {
             $checks[] = $this->check('success', Text::plural('COM_CSPAGEPROTECTOR_CHECK_PAGES_N', $count), $this->optionsUrl('protection'), Text::_('COM_CSPAGEPROTECTOR_CHECK_CHOOSE_PAGES'));
+        }
+
+        // 3b. Protected modules (only mentioned once some are configured).
+        if (ProtectionHelper::hasModuleProtection($params)) {
+            $checks[] = $this->check(
+                'success',
+                Text::plural('COM_CSPAGEPROTECTOR_CHECK_MODULES_N', \count($this->getProtectedModules())),
+                $this->optionsUrl('modules'),
+                Text::_('COM_CSPAGEPROTECTOR_CHOOSE_MODULES')
+            );
         }
 
         // 4. Behind Cloudflare but reading REMOTE_ADDR: every visitor looks like a Cloudflare IP.
@@ -208,6 +222,57 @@ final class DashboardModel extends BaseDatabaseModel
         }
 
         return $items;
+    }
+
+    /**
+     * Front-end modules protected by id or by position (trashed ones left out).
+     *
+     * @return  object[]  id, title, position, module, published, by_position
+     *
+     * @since   0.1.0
+     */
+    public function getProtectedModules(): array
+    {
+        $params    = ProtectionHelper::getParams();
+        $ids       = ProtectionHelper::getProtectedModuleIds($params);
+        $positions = ProtectionHelper::getProtectedPositions($params);
+
+        if ($ids === [] && $positions === []) {
+            return [];
+        }
+
+        $db    = $this->getDatabase();
+        $query = $db->createQuery()
+            ->select($db->quoteName(['id', 'title', 'position', 'module', 'published']))
+            ->from($db->quoteName('#__modules'))
+            ->where($db->quoteName('client_id') . ' = 0')
+            ->where($db->quoteName('published') . ' IN (0, 1)')
+            ->order([$db->quoteName('position') . ' ASC', $db->quoteName('ordering') . ' ASC']);
+
+        $or = [];
+
+        if ($ids !== []) {
+            $or[] = $db->quoteName('id') . ' IN (' . implode(',', array_map('intval', $ids)) . ')';
+        }
+
+        if ($positions !== []) {
+            $or[] = $db->quoteName('position') . ' IN (' . implode(',', array_map([$db, 'quote'], $positions)) . ')';
+        }
+
+        $query->where('(' . implode(' OR ', $or) . ')');
+
+        try {
+            $rows = $db->setQuery($query)->loadObjectList() ?: [];
+        } catch (\Throwable $e) {
+            return [];
+        }
+
+        foreach ($rows as $row) {
+            $row->by_position = !\in_array((int) $row->id, $ids, true);
+            $row->edit_url    = 'index.php?option=com_modules&task=module.edit&id=' . (int) $row->id;
+        }
+
+        return $rows;
     }
 
     /**

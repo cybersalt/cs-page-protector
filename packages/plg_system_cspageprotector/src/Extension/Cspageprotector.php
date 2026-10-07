@@ -18,12 +18,14 @@ use Cybersalt\Component\Cspageprotector\Administrator\Helper\LogHelper;
 use Cybersalt\Component\Cspageprotector\Administrator\Helper\ProtectionHelper;
 use Cybersalt\Component\Cspageprotector\Administrator\Helper\VerificationHelper;
 use Joomla\CMS\Application\CMSApplicationInterface;
+use Joomla\CMS\Cache\CacheControllerFactoryInterface;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Event\Result\ResultAwareInterface;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Log\Log;
 use Joomla\CMS\Plugin\CMSPlugin;
+use Joomla\CMS\Session\Session;
 use Joomla\CMS\Uri\Uri;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Event\EventInterface;
@@ -67,8 +69,204 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
             'onPageCacheSetCaching'  => 'onPageCacheSetCaching',
             'onPageCacheIsExcluded'  => 'onPageCacheIsExcluded',
             'onExtensionAfterSave'   => 'onExtensionAfterSave',
+            'onAfterModuleList'      => 'onAfterModuleList',
+            'onRenderModule'         => 'onRenderModule',
         ];
     }
+
+    /**
+     * Set once a protected module is part of this page, so the page is kept
+     * out of the page cache whoever is viewing it.
+     *
+     * @var    boolean
+     * @since  0.1.0
+     */
+    private bool $protectedModuleOnPage = false;
+
+    /**
+     * Protected modules: in "hide" mode (and always on the challenge page
+     * itself, so there is never a second captcha) drop them from the list
+     * before anything renders, so empty positions collapse as usual.
+     *
+     * @param   EventInterface  $event  onAfterModuleList
+     *
+     * @return  void
+     *
+     * @since   0.1.0
+     */
+    public function onAfterModuleList(EventInterface $event): void
+    {
+        $app = $this->getApplication();
+
+        if (!$this->isActive($app)) {
+            return;
+        }
+
+        try {
+            $params = ProtectionHelper::getParams();
+
+            if (!ProtectionHelper::hasModuleProtection($params)) {
+                return;
+            }
+
+            $modules   = (array) $event->getArgument('modules', []);
+            $protected = array_filter($modules, static fn ($m): bool => \is_object($m) && ProtectionHelper::isProtectedModule($m, $params));
+
+            if ($protected === []) {
+                return;
+            }
+
+            // Whatever this visitor sees, the page differs per visitor now.
+            $this->protectedModuleOnPage = true;
+            $app->allowCache(false);
+
+            if (ProtectionHelper::visitorHasAccess($app, $params)) {
+                return;
+            }
+
+            $onChallengePage = $app->getInput()->getCmd('option') === 'com_cspageprotector';
+            $hide            = (string) $params->get('module_mode', ProtectionHelper::MODULE_MODE_PLACEHOLDER) === ProtectionHelper::MODULE_MODE_HIDE;
+
+            if (!$hide && !$onChallengePage) {
+                // Placeholder mode: onRenderModule swaps the content.
+                return;
+            }
+
+            $kept = array_values(array_filter($modules, static fn ($m): bool => !\is_object($m) || !ProtectionHelper::isProtectedModule($m, $params)));
+
+            if (method_exists($event, 'updateModules')) {
+                $event->updateModules($kept);
+            } else {
+                $event->setArgument('modules', $kept);
+            }
+        } catch (\Throwable $e) {
+            Log::add('cs-page-protector module filter error: ' . $e->getMessage(), Log::ERROR, 'com_cspageprotector');
+        }
+    }
+
+    /**
+     * Placeholder mode: replace a protected module's content with a short
+     * notice and a "Show content" button that runs the one site-wide check.
+     * Runs before the module chrome, so the module keeps its title and box.
+     * The captcha itself is never rendered inside a module.
+     *
+     * @param   EventInterface  $event  onRenderModule
+     *
+     * @return  void
+     *
+     * @since   0.1.0
+     */
+    public function onRenderModule(EventInterface $event): void
+    {
+        if (!$this->protectedModuleOnPage) {
+            return;
+        }
+
+        $app    = $this->getApplication();
+        $module = $event->getArgument('subject') ?? $event->getArgument(0);
+
+        if (!\is_object($module) || !isset($module->content)) {
+            return;
+        }
+
+        try {
+            $params = ProtectionHelper::getParams();
+
+            if (!ProtectionHelper::isProtectedModule($module, $params) || ProtectionHelper::visitorHasAccess($app, $params)) {
+                return;
+            }
+
+            $module->content = $this->renderModulePlaceholder($app, $params);
+        } catch (\Throwable $e) {
+            // Fail closed for the module: never leak its content on an error.
+            $module->content = '';
+            Log::add('cs-page-protector module placeholder error: ' . $e->getMessage(), Log::ERROR, 'com_cspageprotector');
+        }
+    }
+
+    /**
+     * The placeholder shown instead of a protected module's content.
+     *
+     * @param   CMSApplicationInterface  $app     The application.
+     * @param   Registry                 $params  Component params.
+     *
+     * @return  string  Safe HTML.
+     *
+     * @since   0.1.0
+     */
+    private function renderModulePlaceholder(CMSApplicationInterface $app, Registry $params): string
+    {
+        $document = $app->getDocument();
+
+        if ($document && method_exists($document, 'getWebAssetManager')) {
+            $wa = $document->getWebAssetManager();
+            $wa->getRegistry()->addExtensionRegistryFile('com_cspageprotector');
+            $wa->useStyle('com_cspageprotector.module');
+            $wa->useScript('com_cspageprotector.module');
+        }
+
+        $e = static fn (string $s): string => htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
+
+        $text      = trim((string) $params->get('module_placeholder_text', '')) ?: Text::_('PLG_SYSTEM_CSPAGEPROTECTOR_MODULE_LOCKED_TEXT');
+        $button    = trim((string) $params->get('module_placeholder_button', '')) ?: Text::_('PLG_SYSTEM_CSPAGEPROTECTOR_MODULE_LOCKED_BUTTON');
+        $itemId    = ProtectionHelper::getActiveItemId($app);
+        $returnB64 = base64_encode(Uri::getInstance()->toString());
+        $itemParam = $itemId > 0 ? '&Itemid=' . $itemId : '';
+
+        // Fallback (no JavaScript, or a captcha that can't run inline): the
+        // check on its own clean page (tmpl=component: template styling, no
+        // other modules), which then comes back here. Plain non-SEF links are
+        // always routable and keep the base64 intact.
+        $fallbackUrl = Uri::base() . 'index.php?option=com_cspageprotector&view=challenge&tmpl=component'
+            . $itemParam . '&cspp_return=' . rawurlencode($returnB64);
+        $verifyUrl   = Uri::base() . 'index.php?option=com_cspageprotector&task=challenge.verify' . $itemParam;
+
+        // Inline check: the Proof-of-Work widget is placed in the clicked box,
+        // solved, and the form posts; the page reloads with the module shown.
+        // The widget markup is printed once per page inside an inert
+        // <template>, so nothing runs (and only one captcha ever exists)
+        // until a visitor clicks.
+        $captchaName = CaptchaHelper::getConfiguredPlugin($params);
+        $inline      = $captchaName === CaptchaHelper::DEFAULT_PLUGIN && CaptchaHelper::isAvailable($captchaName);
+        $template    = '';
+
+        if ($inline && !$this->captchaTemplatePrinted) {
+            $captcha = CaptchaHelper::getInstance($captchaName);
+            $widget  = $captcha ? (string) $captcha->display(CaptchaHelper::FIELD_NAME, 'cspp-inline-captcha', 'cspp-captcha') : '';
+
+            if ($widget === '') {
+                $inline = false;
+            } else {
+                $template                     = '<template class="cspp-captcha-template">' . $widget . '</template>';
+                $this->captchaTemplatePrinted = true;
+            }
+        }
+
+        return '<div class="cspp-module-locked" data-cspp-inline="' . ($inline ? '1' : '0') . '">'
+            . '<p class="cspp-module-locked-text">' . $e($text) . '</p>'
+            . '<form class="cspp-module-locked-form" method="post" action="' . $e($verifyUrl) . '">'
+            . '<div class="cspp-module-locked-captcha"></div>'
+            . '<a class="btn btn-secondary btn-sm cspp-module-locked-button" href="' . $e($fallbackUrl) . '" rel="nofollow">' . $e($button) . '</a>'
+            . '<p class="cspp-module-locked-status" aria-live="polite"'
+            . ' data-working="' . $e(Text::_('PLG_SYSTEM_CSPAGEPROTECTOR_MODULE_WORKING')) . '"'
+            . ' data-done="' . $e(Text::_('PLG_SYSTEM_CSPAGEPROTECTOR_MODULE_DONE')) . '"'
+            . ' data-error="' . $e(Text::_('PLG_SYSTEM_CSPAGEPROTECTOR_MODULE_ERROR')) . '"></p>'
+            . '<input type="hidden" name="return" value="' . $e($returnB64) . '">'
+            . '<input type="hidden" name="cspp_item" value="' . (int) $itemId . '">'
+            . '<input type="hidden" name="cspp_source" value="module">'
+            . '<input type="hidden" name="' . $e(Session::getFormToken()) . '" value="1">'
+            . '</form>'
+            . $template
+            . '</div>';
+    }
+
+    /**
+     * The inline captcha <template> is printed once per page.
+     *
+     * @var    boolean
+     * @since  0.1.0
+     */
+    private bool $captchaTemplatePrinted = false;
 
     /**
      * When the component Options are saved with "Shorten IP addresses" on,
@@ -98,8 +296,26 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
             if (LogHelper::anonymizeEnabled(new Registry((string) ($table->params ?? '')))) {
                 LogHelper::anonymizeStored(Factory::getContainer()->get(DatabaseInterface::class));
             }
+
+            // Module protection changes what a page contains per visitor, so drop
+            // any page-cache entries created before the new settings.
+            // The site page cache lives in /cache on Joomla 5 but in
+            // administrator/cache on Joomla 6 (and wherever cache_path points).
+            $bases = array_unique(array_filter([
+                (string) $this->getApplication()->get('cache_path', ''),
+                JPATH_SITE . '/cache',
+                JPATH_ADMINISTRATOR . '/cache',
+            ]));
+
+            foreach ($bases as $base) {
+                if (is_dir($base)) {
+                    Factory::getContainer()->get(CacheControllerFactoryInterface::class)
+                        ->createCacheController('output', ['defaultgroup' => 'page', 'cachebase' => $base])
+                        ->clean('page');
+                }
+            }
         } catch (\Throwable $e) {
-            Log::add('cs-page-protector: shortening stored IPs failed: ' . $e->getMessage(), Log::WARNING, 'com_cspageprotector');
+            Log::add('cs-page-protector: after-save tasks failed: ' . $e->getMessage(), Log::WARNING, 'com_cspageprotector');
         }
     }
 
@@ -160,7 +376,9 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
      */
     public function onPageCacheIsExcluded(EventInterface $event): void
     {
-        if ($this->isProtectedSafe()) {
+        // Protected page, or a page carrying a protected module: either way the
+        // output depends on the visitor and must never be cached.
+        if ($this->protectedModuleOnPage || $this->isProtectedSafe()) {
             $this->addResult($event, true);
         }
     }
@@ -235,6 +453,7 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
         // item stay the same, so the visitor sees the challenge inside the
         // site's normal template and lands back here once they pass.
         $input->set('cspp_return', base64_encode($url));
+        $input->set('cspp_inplace', 1);
         $input->set('option', 'com_cspageprotector');
         $input->set('view', 'challenge');
         $input->set('layout', 'default');

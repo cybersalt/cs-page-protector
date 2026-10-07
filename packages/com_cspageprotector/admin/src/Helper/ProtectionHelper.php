@@ -49,6 +49,9 @@ final class ProtectionHelper
      */
     private const ALWAYS_ALLOWED_OPTIONS = ['com_ajax', 'com_cspageprotector'];
 
+    public const MODULE_MODE_PLACEHOLDER = 'placeholder';
+    public const MODULE_MODE_HIDE        = 'hide';
+
     /**
      * Memoised "is this request protected?" answer.
      *
@@ -56,6 +59,104 @@ final class ProtectionHelper
      * @since  0.1.0
      */
     private static ?bool $protectedMemo = null;
+
+    /**
+     * Memoised "may this visitor see protected content?" answer.
+     *
+     * @var    boolean|null
+     * @since  0.1.0
+     */
+    private static ?bool $accessMemo = null;
+
+    /**
+     * Module ids protected in Options.
+     *
+     * @param   Registry  $params  Component params.
+     *
+     * @return  int[]
+     *
+     * @since   0.1.0
+     */
+    public static function getProtectedModuleIds(Registry $params): array
+    {
+        $ids = array_map('intval', (array) $params->get('protect_modules', []));
+
+        return array_values(array_unique(array_filter($ids, static fn (int $id): bool => $id > 0)));
+    }
+
+    /**
+     * Module positions protected in Options (every module in them is protected).
+     *
+     * @param   Registry  $params  Component params.
+     *
+     * @return  string[]
+     *
+     * @since   0.1.0
+     */
+    public static function getProtectedPositions(Registry $params): array
+    {
+        $positions = array_map(static fn ($p): string => trim((string) $p), (array) $params->get('protect_positions', []));
+
+        return array_values(array_unique(array_filter($positions, static fn (string $p): bool => $p !== '')));
+    }
+
+    /**
+     * Is any module protection configured at all? (Cheap early-out.)
+     *
+     * @param   Registry  $params  Component params.
+     *
+     * @return  boolean
+     *
+     * @since   0.1.0
+     */
+    public static function hasModuleProtection(Registry $params): bool
+    {
+        return self::getProtectedModuleIds($params) !== [] || self::getProtectedPositions($params) !== [];
+    }
+
+    /**
+     * Is this module protected (by id or by position)?
+     *
+     * @param   object    $module  Module row from ModuleHelper.
+     * @param   Registry  $params  Component params.
+     *
+     * @return  boolean
+     *
+     * @since   0.1.0
+     */
+    public static function isProtectedModule(object $module, Registry $params): bool
+    {
+        if (\in_array((int) ($module->id ?? 0), self::getProtectedModuleIds($params), true)) {
+            return true;
+        }
+
+        return \in_array((string) ($module->position ?? ''), self::getProtectedPositions($params), true);
+    }
+
+    /**
+     * May the current visitor see protected content? True when they're
+     * exempt (allow-listed IP, logged-in user/group, verified search engine)
+     * or already hold a valid pass. Memoised for the request.
+     *
+     * @param   CMSApplicationInterface  $app     The application.
+     * @param   Registry                 $params  Component params.
+     *
+     * @return  boolean
+     *
+     * @since   0.1.0
+     */
+    public static function visitorHasAccess(CMSApplicationInterface $app, Registry $params): bool
+    {
+        if (self::$accessMemo === null) {
+            $ip        = IpHelper::getClientIp($params);
+            $userAgent = $app->getInput()->server->getString('HTTP_USER_AGENT', '');
+
+            self::$accessMemo = self::getExemption($app, $params, $ip, $userAgent) !== self::EXEMPT_NONE
+                || VerificationHelper::isVerified($app, $params, $ip, $userAgent);
+        }
+
+        return self::$accessMemo;
+    }
 
     /**
      * Component params.

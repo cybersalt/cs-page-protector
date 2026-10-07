@@ -13,6 +13,8 @@ namespace Cybersalt\Component\Cspageprotector\Site\View\Challenge;
 \defined('_JEXEC') or die;
 
 use Cybersalt\Component\Cspageprotector\Administrator\Helper\CaptchaHelper;
+use Cybersalt\Component\Cspageprotector\Administrator\Helper\IpHelper;
+use Cybersalt\Component\Cspageprotector\Administrator\Helper\LogHelper;
 use Cybersalt\Component\Cspageprotector\Administrator\Helper\ProtectionHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
@@ -66,6 +68,21 @@ final class HtmlView extends BaseHtmlView
         $input  = $app->getInput();
 
         $this->itemId     = ProtectionHelper::getActiveItemId($app);
+
+        // Reached through a protected module's "Show content" button rather
+        // than the in-place page check (which the plugin already logged).
+        if ($input->getInt('cspp_inplace', 0) !== 1) {
+            LogHelper::log(
+                $params,
+                LogHelper::EVENT_CHALLENGED,
+                IpHelper::getClientIp($params),
+                $input->server->getString('HTTP_USER_AGENT', ''),
+                (string) (base64_decode($input->getBase64('cspp_return', ''), true) ?: Uri::getInstance()->toString()),
+                $this->itemId,
+                CaptchaHelper::getConfiguredPlugin($params),
+                'module'
+            );
+        }
         $this->returnB64  = $input->getBase64('cspp_return', '') ?: base64_encode(Uri::root());
         $this->autoStart  = (int) $params->get('auto_start', 1) === 1;
         $this->autoSubmit = (int) $params->get('auto_submit', 1) === 1;

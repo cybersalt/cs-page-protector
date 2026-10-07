@@ -61,3 +61,17 @@ en-GB only during the pre-release test loop (Brain wishlist timing exception). A
 ## Versioning (Tim, 2026-10-07)
 
 One version number per unreleased cycle. Rebuilds keep the same version, and the zip timestamp tells them apart. The changelog lists only released versions plus a single "Unreleased" entry for the version in progress. Bump only when a build goes to someone else (client site, tester, release). No upgrade-migration code or `sql/updates` stubs for versions that were never released.
+
+## Credit people in the changelog (Tim, 2026-10-07)
+
+When an issue or idea from someone is acted on, the changelog entry that ships it names them, in both `CHANGELOG.md` and `CHANGELOG.html`. Format: end the bullet with `Idea from Bjørn (#4).` (or `Suggested by …` / `Reported by …`), and for joint ideas `Ideas from Bjørn and Julie (#1).` Credit only what actually shipped, in the release that ships it. The person who suggested an issue is named in its body ("Idea from …") or in a comment; check both before writing the entry.
+
+Credits map for the open issues (keep this updated as issues are filed):
+
+| Issue | Credit |
+|---|---|
+| #1 Email and phone number protection | Bjørn; visual obfuscation approach: Julie (comment on #1) |
+| #3 Protect information in modules | Bjørn |
+| #4 Partial email cloaking | Bjørn, building on Julie's visual obfuscation idea |
+| #5 Warn when no captcha is available | Bjørn (question) |
+| #2, #6, #7, #8, #9, #10, #11 | Tim (no credit line needed) |

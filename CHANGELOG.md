@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Cybersalt Page Protector are documented here. Only released versions are listed.
+All notable changes to Cybersalt Page Protector are documented here. Only released versions are listed. People whose ideas or reports shaped a change are credited on that entry.
 
 ## [0.1.0] - Unreleased (first version, in development)
 

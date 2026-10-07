@@ -1,0 +1,23 @@
+{
+    "name": "cybersalt/cs-page-protector",
+    "type": "joomla-package",
+    "description": "Protect selected Joomla pages from scrapers with a proof-of-work challenge",
+    "license": "GPL-2.0-or-later",
+    "authors": [
+        {
+            "name": "Cybersalt Consulting Ltd.",
+            "email": "support@cybersalt.com",
+            "homepage": "https://cybersalt.com"
+        }
+    ],
+    "require": {
+        "php": ">=8.1"
+    },
+    "require-dev": {
+        "joomla/coding-standards": "dev-main"
+    },
+    "scripts": {
+        "lint:php": "find packages -name '*.php' -print0 | xargs -0 -n1 php -l",
+        "lint:phpcs": "phpcs --standard=phpcs.xml packages"
+    }
+}

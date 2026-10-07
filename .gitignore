@@ -1,0 +1,22 @@
+## Build artifacts
+*.zip
+/build/
+/dist/
+
+## Editor / OS
+.idea/
+.vscode/
+*.code-workspace
+.DS_Store
+Thumbs.db
+
+## PHP
+vendor/
+composer.lock
+
+## Logs / scratch
+*.log
+.scratch/
+.claudian-tmp/
+.work/
+.claude/

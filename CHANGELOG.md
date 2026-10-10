@@ -2,6 +2,16 @@
 
 All notable changes to Cybersalt Page Protector are documented here. Only released versions are listed. People whose ideas or reports shaped a change are credited on that entry.
 
+## [0.2.0] - 2026-10-10
+
+### 🚀 New
+- Clear warnings when no captcha can run. The install card (on install and on every update) says so and links to the fix. The dashboard check now says what it means for visitors right now: protected pages open to everyone (or an error for every visitor, depending on the setting) and protected modules locked. While something is protected and the captcha can't run, a warning also shows on the Home Dashboard and on every Page Protector admin page, including its Options. When the captcha plugin is only switched off, the warning has an "Enable the captcha plugin" button that switches it back on in one click. The README explains what to use on each Joomla version. Prompted by a question from Bjørn (#5).
+- "No guarantee" notice: bots and hackers are persistent, Page Protector does its best but can't guarantee bad actors won't find another way around it, and if there's information you don't want online, don't put it online. It shows in a red box on the install card and at the top of every Page Protector admin page (dashboard, Event Log, every Options tab) until someone who can change Options clicks "I understand". That's once per site, and the dashboard then shows who accepted it and when. Also in the README and on the Protection tab (#14).
+
+### 🐛 Fixed
+- The install screen showed the description twice, once in Joomla's message box and again in the post-install card. Only the card is shown now (#2).
+- "Reset all passes" now takes effect straight away on sites with Joomla's cache switched on. The new settings were saved, but the cached copy could keep old passes working until the cache expired.
+
 ## [0.1.0] - 2026-10-07
 
 ### 🚀 New

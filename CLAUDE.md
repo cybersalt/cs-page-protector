@@ -4,7 +4,7 @@ Project notes for Claude. Layers on top of `~/.claude/CLAUDE.md` and the vault's
 
 ## What this repo is
 
-Cybersalt Page Protector: a Joomla 5/6 package that puts a proof-of-work check in front of selected menu items and modules to slow down scrapers. **v0.1.0 released 2026-10-07** (GitHub + cs-Release-Manager). v1 uses Joomla 6.1's core Proof-of-Work captcha (`plg_captcha_powcaptcha`, ALTCHA-based) through Joomla's captcha framework, so other captcha plugins already work and new challenge types can be added later.
+Cybersalt Page Protector: a Joomla 5/6 package that puts a proof-of-work check in front of selected menu items and modules to slow down scrapers. **v0.2.0 released 2026-10-10** (GitHub + cs-Release-Manager; 0.1.0 was 2026-10-07). v1 uses Joomla 6.1's core Proof-of-Work captcha (`plg_captcha_powcaptcha`, ALTCHA-based) through Joomla's captcha framework, so other captcha plugins already work and new challenge types can be added later.
 
 Vault note: `04.knowledge/cs-page-protector.md` - history, decisions, open items. Update it on every meaningful change.
 
@@ -19,7 +19,8 @@ packages/
 │   │   ├── CaptchaHelper.php       Wrapper over Joomla\CMS\Captcha\Captcha
 │   │   ├── BotVerifier.php         Forward-confirmed reverse DNS for search engines
 │   │   ├── IpHelper.php            Client IP, CIDR matching, anonymising
-│   │   └── LogHelper.php           #__cspageprotector_log writes + pruning
+│   │   ├── LogHelper.php           #__cspageprotector_log writes + pruning
+│   │   └── NoticeHelper.php        "No guarantee" red box + per-site acceptance record
 │   ├── admin/                      Dashboard, Event Log, Options (config.xml)
 │   └── site/                       Challenge view + ChallengeController::verify
 ├── plg_system_cspageprotector/     Gatekeeper: onAfterRoute + page-cache events
@@ -53,6 +54,9 @@ With "also catch other routes" on, `guardSharedContent()` 403s non-HTML com_cont
 - **Proxy headers are only believed from a trusted hop:** Cloudflare's published ranges for the Cloudflare source, otherwise the `trusted_proxies` list (private/loopback when it's empty). X-Forwarded-For is walked right to left, skipping trusted hops. `IpHelper::getClientIp()`.
 - **Search-engine DNS checks are budgeted** (`BotVerifier::LOOKUPS_PER_MINUTE`, plus a negative cache per /24 or /64), so fake Googlebot UAs can't flood DNS.
 - **Return URLs go through `ProtectionHelper::safeReturnUrl()`** (exact host and port, or a `/path`). Use it for any new redirect.
+- **Writing component params outside an Options save: use `ProtectionHelper::saveParams()`.** With caching on, `ComponentHelper` reads params from the `_system` cache group, so a bare `UPDATE #__extensions` doesn't show until that cache expires. `saveParams()` cleans `_system` in every cache base. Any value written this way also needs a hidden field in `config.xml`, or the next Options save drops it.
+- **"No guarantee" notice (#14, Tim):** red box at the top of every Page Protector admin page and on the install card until accepted, once per site, by someone with `core.options`. Recorded in params `notice_accepted_by/_name/_at`. Options and the installer wrap everything in one form whose hidden `task` field beats a `formaction` URL, so the accept button builds its own POST form in JS with the session token.
+- **Admin warning when the captcha can't run (#5):** the system plugin enqueues it on the Home Dashboard and every Page Protector admin page, including its own dashboard and Options (Tim: "that's where people need to read it"). Page views only: not on POSTs or `task=` requests, or it shows stale after the redirect. When the plugin is only disabled it carries an "Enable the captcha plugin" link (`dashboard.enablecaptcha`, needs `core.edit.state` on com_plugins). **Joomla sanitises message HTML (`Joomla.sanitizeHtml`)**: buttons and forms are stripped, links survive, so it's a GET with the form token in the URL (`checkToken('get')`). Enabling a plugin must clean the `com_plugins` cache group (`ProtectionHelper::cleanCacheGroup()`).
 - Admin views call `PermissionHelper::requireView()` themselves, because `task=<view>.display` skips the DisplayController check.
 - **Browser testing from Windows Playwright needs `http://localhost:8086`**, not the WSL IP: ALTCHA needs Web Crypto, which needs a secure context.
 
@@ -100,7 +104,7 @@ Credits map for the open issues (keep this updated as issues are filed):
 | #1 Email and phone number protection | Bjørn; visual obfuscation approach: Julie (comment on #1) |
 | #3 Protect information in modules | Bjørn (shipped and credited in 0.1.0, closed) |
 | #4 Partial email cloaking | Bjørn, building on Julie's visual obfuscation idea |
-| #5 Warn when no captcha is available | Bjørn (question) |
+| #5 Warn when no captcha is available | Bjørn (question; shipped and credited in 0.2.0, closed) |
 | #9 Turnstile and other captchas | Tim for now; Bjørn and Julie also asked for it on stream (WMW #355). Ask Tim before crediting |
 | #13 Send failed visitors to an info page | Bjørn |
 | #2, #6, #7, #8, #10, #11, #12, #14, #15 | Tim (no credit line needed) |

@@ -13,6 +13,7 @@ namespace Cybersalt\Component\Cspageprotector\Administrator\Helper;
 \defined('_JEXEC') or die;
 
 use Joomla\CMS\Application\CMSApplicationInterface;
+use Joomla\CMS\Cache\CacheControllerFactoryInterface;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Uri\Uri;
@@ -116,6 +117,22 @@ final class ProtectionHelper
     }
 
     /**
+     * Are any pages protected? "Every page except" always protects something;
+     * "selected" mode only once menu items are picked.
+     *
+     * @param   Registry  $params  Component params.
+     *
+     * @return  boolean
+     *
+     * @since   0.2.0
+     */
+    public static function hasPageProtection(Registry $params): bool
+    {
+        return (string) $params->get('protection_mode', 'selected') === self::MODE_ALL_EXCEPT
+            || self::getMenuItemIds($params) !== [];
+    }
+
+    /**
      * Is this module protected (by id or by position)?
      *
      * @param   object    $module  Module row from ModuleHelper.
@@ -169,6 +186,71 @@ final class ProtectionHelper
     public static function getParams(): Registry
     {
         return ComponentHelper::getParams('com_cspageprotector');
+    }
+
+    /**
+     * Write the component params straight to #__extensions (for actions that
+     * aren't an Options save) and drop the cached copy. With caching on,
+     * ComponentHelper reads params from the `_system` cache group, so without
+     * this the change wouldn't show until that cache expired. The site cache
+     * lives in /cache on Joomla 5 and administrator/cache on Joomla 6, so both
+     * (and cache_path) are cleaned.
+     *
+     * @param   Registry  $params  The full params to store.
+     *
+     * @return  void
+     *
+     * @since   0.2.0
+     */
+    public static function saveParams(Registry $params): void
+    {
+        $db   = Factory::getContainer()->get(DatabaseInterface::class);
+        $json = $params->toString();
+
+        $db->setQuery(
+            $db->createQuery()
+                ->update($db->quoteName('#__extensions'))
+                ->set($db->quoteName('params') . ' = :params')
+                ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
+                ->where($db->quoteName('element') . ' = ' . $db->quote('com_cspageprotector'))
+                ->bind(':params', $json)
+        )->execute();
+
+        self::cleanCacheGroup('_system');
+    }
+
+    /**
+     * Clean one cache group in every place Joomla may keep it: the site cache
+     * is /cache on Joomla 5 and administrator/cache on Joomla 6, plus
+     * cache_path when it's set.
+     *
+     * @param   string  $group  Cache group, e.g. `_system` or `com_plugins`.
+     *
+     * @return  void
+     *
+     * @since   0.2.0
+     */
+    public static function cleanCacheGroup(string $group): void
+    {
+        $bases = array_unique(array_filter([
+            (string) Factory::getApplication()->get('cache_path', ''),
+            JPATH_SITE . '/cache',
+            JPATH_ADMINISTRATOR . '/cache',
+        ]));
+
+        foreach ($bases as $base) {
+            if (!is_dir($base)) {
+                continue;
+            }
+
+            try {
+                Factory::getContainer()->get(CacheControllerFactoryInterface::class)
+                    ->createCacheController('callback', ['defaultgroup' => $group, 'cachebase' => $base])
+                    ->clean($group);
+            } catch (\Throwable $e) {
+                // A stale cache only delays the change; the database is already right.
+            }
+        }
     }
 
     /**

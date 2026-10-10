@@ -245,6 +245,26 @@
             type="hidden"
             filter="cmd"
         />
+
+        <!-- Who accepted the "no guarantee" notice, and when (NoticeHelper).
+             Hidden fields so an Options save keeps them. -->
+        <field
+            name="notice_accepted_by"
+            type="hidden"
+            filter="integer"
+        />
+
+        <field
+            name="notice_accepted_name"
+            type="hidden"
+            filter="string"
+        />
+
+        <field
+            name="notice_accepted_at"
+            type="hidden"
+            filter="string"
+        />
     </fieldset>
 
     <fieldset

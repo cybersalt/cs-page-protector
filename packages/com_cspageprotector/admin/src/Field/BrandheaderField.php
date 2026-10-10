@@ -12,6 +12,7 @@ namespace Cybersalt\Component\Cspageprotector\Administrator\Field;
 
 \defined('_JEXEC') or die;
 
+use Cybersalt\Component\Cspageprotector\Administrator\Helper\NoticeHelper;
 use Joomla\CMS\Form\FormField;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Uri\Uri;
@@ -116,6 +117,9 @@ html[data-color-scheme="dark"] .cs-plugin-tab-header img {
 CSS;
         }
 
+        // The "no guarantee" notice sits under the header on every tab until it's accepted.
+        $notice = NoticeHelper::renderBox();
+
         return <<<HTML
 {$css}
 <div class="cs-plugin-tab-header">
@@ -125,6 +129,7 @@ CSS;
         {$subtitleHtml}
     </div>
 </div>
+{$notice}
 HTML;
     }
 

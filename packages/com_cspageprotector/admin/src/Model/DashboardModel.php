@@ -22,6 +22,7 @@ use Joomla\CMS\Plugin\PluginHelper;
 use Joomla\CMS\Router\Route;
 use Joomla\CMS\Uri\Uri;
 use Joomla\Database\ParameterType;
+use Joomla\Registry\Registry;
 
 /**
  * Dashboard data: health checks, 24-hour stats, protected pages, top IPs,
@@ -59,15 +60,17 @@ final class DashboardModel extends BaseDatabaseModel
         // 2. The captcha.
         $captcha     = CaptchaHelper::getConfiguredPlugin($params);
         $extensionId = CaptchaHelper::getExtensionId($captcha);
+        $problem     = CaptchaHelper::getProblem($captcha);
+        $impact      = $problem !== CaptchaHelper::PROBLEM_NONE ? $this->captchaImpact($params) : '';
 
-        if ($extensionId === 0) {
-            $checks[] = $captcha === CaptchaHelper::DEFAULT_PLUGIN
-                ? $this->check('danger', Text::sprintf('COM_CSPAGEPROTECTOR_CHECK_POW_MISSING', JVERSION), 'index.php?option=com_joomlaupdate', Text::_('COM_CSPAGEPROTECTOR_CHECK_POW_MISSING_LINK'))
-                : $this->check('danger', Text::sprintf('COM_CSPAGEPROTECTOR_CHECK_CAPTCHA_MISSING', $captcha), $this->optionsUrl('challenge'), Text::_('COM_CSPAGEPROTECTOR_OPEN_OPTIONS'));
-        } elseif (!CaptchaHelper::isAvailable($captcha)) {
+        if ($problem === CaptchaHelper::PROBLEM_POW_MISSING) {
+            $checks[] = $this->check('danger', trim(Text::sprintf('COM_CSPAGEPROTECTOR_CHECK_POW_MISSING', JVERSION) . ' ' . $impact), 'index.php?option=com_joomlaupdate', Text::_('COM_CSPAGEPROTECTOR_CHECK_POW_MISSING_LINK'));
+        } elseif ($problem === CaptchaHelper::PROBLEM_MISSING) {
+            $checks[] = $this->check('danger', trim(Text::sprintf('COM_CSPAGEPROTECTOR_CHECK_CAPTCHA_MISSING', $captcha) . ' ' . $impact), $this->optionsUrl('challenge'), Text::_('COM_CSPAGEPROTECTOR_OPEN_OPTIONS'));
+        } elseif ($problem === CaptchaHelper::PROBLEM_DISABLED) {
             $checks[] = $this->check(
                 'danger',
-                Text::sprintf('COM_CSPAGEPROTECTOR_CHECK_CAPTCHA_DISABLED', $captcha),
+                trim(Text::sprintf('COM_CSPAGEPROTECTOR_CHECK_CAPTCHA_DISABLED', $captcha) . ' ' . $impact),
                 'index.php?option=com_plugins&task=plugin.edit&extension_id=' . $extensionId,
                 Text::_('COM_CSPAGEPROTECTOR_CHECK_CAPTCHA_DISABLED_LINK')
             );
@@ -353,6 +356,34 @@ final class DashboardModel extends BaseDatabaseModel
 
         return 'index.php?option=com_config&view=component&component=com_cspageprotector&return=' . $return
             . ($tab !== '' ? '#' . $tab : '');
+    }
+
+    /**
+     * What a captcha that can't run means for visitors right now, given what
+     * is protected and the "If the captcha can't run" setting. Empty when
+     * nothing is protected yet.
+     *
+     * @param   Registry  $params  Component params.
+     *
+     * @return  string
+     *
+     * @since   0.2.0
+     */
+    private function captchaImpact(Registry $params): string
+    {
+        $parts = [];
+
+        if (ProtectionHelper::hasPageProtection($params)) {
+            $parts[] = (string) $params->get('captcha_unavailable', 'allow') === 'allow'
+                ? Text::_('COM_CSPAGEPROTECTOR_CHECK_IMPACT_PAGES_OPEN')
+                : Text::_('COM_CSPAGEPROTECTOR_CHECK_IMPACT_PAGES_BLOCKED');
+        }
+
+        if (ProtectionHelper::hasModuleProtection($params)) {
+            $parts[] = Text::_('COM_CSPAGEPROTECTOR_CHECK_IMPACT_MODULES_LOCKED');
+        }
+
+        return implode(' ', $parts);
     }
 
     /**

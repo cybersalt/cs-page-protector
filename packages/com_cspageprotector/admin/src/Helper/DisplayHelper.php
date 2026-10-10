@@ -12,6 +12,7 @@ namespace Cybersalt\Component\Cspageprotector\Administrator\Helper;
 
 \defined('_JEXEC') or die;
 
+use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 
 /**
@@ -21,6 +22,44 @@ use Joomla\CMS\Language\Text;
  */
 final class DisplayHelper
 {
+    /**
+     * CSS for buttons that sit inside a coloured alert (the red "no
+     * guarantee" box, the yellow "can't run its check" warning). A button the
+     * same colour as its box disappears, worst in dark Atum, so they get a dark
+     * border in light mode and, in dark mode, Atum's own action blue
+     * (`--primary`, so a customised Atum colour carries over; Tim, 2026-10-10).
+     * Must match the copy in pkg_cspageprotector/script.php (install card).
+     *
+     * @since  0.2.0
+     */
+    public const ALERT_BUTTON_CSS = '.cspp-alert-btn{border:2px solid #1f2937 !important;font-weight:600;}'
+        . '.cspp-alert-btn:hover,.cspp-alert-btn:focus{filter:brightness(0.9);}'
+        . 'html[data-bs-theme="dark"] .cspp-alert-btn,html[data-color-scheme="dark"] .cspp-alert-btn'
+        . '{background-color:var(--primary,#007db0) !important;color:#fff !important;border-color:#1f2937 !important;}'
+        . 'html[data-bs-theme="dark"] .cspp-alert-btn:hover,html[data-color-scheme="dark"] .cspp-alert-btn:hover,'
+        . 'html[data-bs-theme="dark"] .cspp-alert-btn:focus,html[data-color-scheme="dark"] .cspp-alert-btn:focus'
+        . '{filter:brightness(1.15);}';
+
+    /**
+     * Add ALERT_BUTTON_CSS to the page once (Web Asset Manager, so it gets a
+     * CSP nonce when one is used). Safe to call from several places.
+     *
+     * @return  void
+     *
+     * @since   0.2.0
+     */
+    public static function addAlertButtonStyle(): void
+    {
+        static $added = false;
+
+        if ($added) {
+            return;
+        }
+
+        $added = true;
+
+        Factory::getApplication()->getDocument()->getWebAssetManager()->addInlineStyle(self::ALERT_BUTTON_CSS);
+    }
     /**
      * Colour-coded Bootstrap badge for an event type.
      *

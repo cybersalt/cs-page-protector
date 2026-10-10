@@ -12,6 +12,7 @@
 
 use Cybersalt\Component\Cspageprotector\Administrator\Helper\DisplayHelper;
 use Cybersalt\Component\Cspageprotector\Administrator\Helper\LogHelper;
+use Cybersalt\Component\Cspageprotector\Administrator\Helper\NoticeHelper;
 use Cybersalt\Component\Cspageprotector\Administrator\Helper\ProtectionHelper;
 use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Language\Text;
@@ -50,6 +51,8 @@ $cards = [
 ];
 ?>
 <div class="cspp-logs">
+
+    <?php echo NoticeHelper::renderBox(); ?>
 
     <div class="row g-2 mb-3">
         <?php foreach ($cards as $card) : ?>

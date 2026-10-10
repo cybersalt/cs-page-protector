@@ -8,7 +8,7 @@
     <license>GNU General Public License version 2 or later</license>
     <authorEmail>support@cybersalt.com</authorEmail>
     <authorUrl>https://cybersalt.com</authorUrl>
-    <version>0.1.0</version>
+    <version>0.2.0</version>
     <description>COM_CSPAGEPROTECTOR_XML_DESCRIPTION</description>
 
     <targetplatform name="joomla" version="5\.[0-9]+|6\.[0-9]+" />

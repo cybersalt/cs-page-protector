@@ -13,6 +13,7 @@ namespace Cybersalt\Plugin\System\Cspageprotector\Extension;
 \defined('_JEXEC') or die;
 
 use Cybersalt\Component\Cspageprotector\Administrator\Helper\CaptchaHelper;
+use Cybersalt\Component\Cspageprotector\Administrator\Helper\DisplayHelper;
 use Cybersalt\Component\Cspageprotector\Administrator\Helper\IpHelper;
 use Cybersalt\Component\Cspageprotector\Administrator\Helper\LogHelper;
 use Cybersalt\Component\Cspageprotector\Administrator\Helper\ProtectionHelper;
@@ -72,7 +73,38 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
             'onAfterModuleList'      => 'onAfterModuleList',
             'onRenderModule'         => 'onRenderModule',
             'onContentPrepare'       => 'onContentPrepare',
+            'onBeforeCompileHead'    => 'onBeforeCompileHead',
         ];
+    }
+
+    /**
+     * Set when the admin warning carries the "Enable the captcha plugin"
+     * button, whose style has to wait until the document exists.
+     *
+     * @var    boolean
+     * @since  0.2.0
+     */
+    private bool $alertButtonStyleNeeded = false;
+
+    /**
+     * Add the alert-button CSS for the admin warning queued in onAfterRoute
+     * (too early for the document there).
+     *
+     * @return  void
+     *
+     * @since   0.2.0
+     */
+    public function onBeforeCompileHead(): void
+    {
+        if (!$this->alertButtonStyleNeeded) {
+            return;
+        }
+
+        try {
+            DisplayHelper::addAlertButtonStyle();
+        } catch (\Throwable $e) {
+            // Unstyled is still usable.
+        }
     }
 
     /**
@@ -367,6 +399,12 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
     {
         $app = $this->getApplication();
 
+        if ($app->isClient('administrator')) {
+            $this->warnAdminIfCaptchaCantRun($app);
+
+            return;
+        }
+
         if (!$this->isActive($app)) {
             return;
         }
@@ -639,6 +677,117 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
         $app->close();
 
         exit;
+    }
+
+    /**
+     * Something is protected but the captcha can't run, so protection isn't
+     * doing what the admin thinks. Say so on the Home Dashboard and on every
+     * Page Protector admin page, including its Options, so it can't be missed.
+     *
+     * @param   CMSApplicationInterface  $app  The application.
+     *
+     * @return  void
+     *
+     * @since   0.2.0
+     */
+    private function warnAdminIfCaptchaCantRun(CMSApplicationInterface $app): void
+    {
+        $input = $app->getInput();
+
+        // Page views only: a POST (saving Options) or a task (e.g. the "Enable
+        // the captcha plugin" link) redirects to a page view that warns if
+        // it still needs to, so warning here too would show it twice or stale.
+        if (
+            $input->getMethod() !== 'GET' || $input->getCmd('task', '') !== ''
+            || $input->getCmd('format', 'html') !== 'html' || $input->getCmd('tmpl') === 'component'
+        ) {
+            return;
+        }
+
+        $option = $input->getCmd('option', '');
+        $view   = $input->getCmd('view', '');
+
+        $relevant = match ($option) {
+            '', 'com_cpanel'      => \in_array($view, ['', 'cpanel'], true) && $input->getCmd('dashboard', '') === '',
+            'com_cspageprotector' => true,
+            'com_config'          => $input->getCmd('component', '') === 'com_cspageprotector',
+            default               => false,
+        };
+
+        if (!$relevant || !class_exists(ProtectionHelper::class) || !ComponentHelper::isEnabled('com_cspageprotector')) {
+            return;
+        }
+
+        try {
+            if (!$app->getIdentity() || !$app->getIdentity()->authorise('core.manage', 'com_cspageprotector')) {
+                return;
+            }
+
+            $params  = ProtectionHelper::getParams();
+            $pages   = ProtectionHelper::hasPageProtection($params);
+            $modules = ProtectionHelper::hasModuleProtection($params);
+
+            if (!$pages && !$modules) {
+                return;
+            }
+
+            $captcha = CaptchaHelper::getConfiguredPlugin($params);
+            $problem = CaptchaHelper::getProblem($captcha);
+
+            $reason = match ($problem) {
+                CaptchaHelper::PROBLEM_NONE        => '',
+                CaptchaHelper::PROBLEM_POW_MISSING => Text::sprintf('PLG_SYSTEM_CSPAGEPROTECTOR_ADMIN_POW_MISSING', JVERSION),
+                CaptchaHelper::PROBLEM_MISSING     => Text::sprintf('PLG_SYSTEM_CSPAGEPROTECTOR_ADMIN_CAPTCHA_MISSING', $captcha),
+                default                            => Text::sprintf('PLG_SYSTEM_CSPAGEPROTECTOR_ADMIN_CAPTCHA_DISABLED', $captcha),
+            };
+
+            if ($reason === '') {
+                return;
+            }
+
+            $parts = [$reason];
+
+            if ($pages) {
+                $parts[] = (string) $params->get('captcha_unavailable', 'allow') === 'allow'
+                    ? Text::_('PLG_SYSTEM_CSPAGEPROTECTOR_ADMIN_IMPACT_PAGES_OPEN')
+                    : Text::_('PLG_SYSTEM_CSPAGEPROTECTOR_ADMIN_IMPACT_PAGES_BLOCKED');
+            }
+
+            if ($modules) {
+                $parts[] = Text::_('PLG_SYSTEM_CSPAGEPROTECTOR_ADMIN_IMPACT_MODULES_LOCKED');
+            }
+
+            $links = [];
+
+            // One click to fix the common case: the plugin is there, just switched off.
+            // Joomla sanitises messages down to plain links, so this is a GET
+            // carrying the form token, checked with checkToken('get').
+            if ($problem === CaptchaHelper::PROBLEM_DISABLED && $app->getIdentity()->authorise('core.edit.state', 'com_plugins')) {
+                $return  = base64_encode(Uri::getInstance()->toString(['path', 'query']));
+                $this->alertButtonStyleNeeded = true;
+                $links[] = '<a class="btn btn-sm btn-warning cspp-alert-btn mt-2 me-2" href="'
+                    . htmlspecialchars(
+                        'index.php?option=com_cspageprotector&task=dashboard.enablecaptcha&' . Session::getFormToken() . '=1&return=' . urlencode($return),
+                        ENT_QUOTES,
+                        'UTF-8'
+                    )
+                    . '">' . htmlspecialchars(Text::_('PLG_SYSTEM_CSPAGEPROTECTOR_ADMIN_ENABLE_CAPTCHA'), ENT_QUOTES, 'UTF-8') . '</a>';
+            }
+
+            if (!($option === 'com_cspageprotector' && \in_array($view, ['', 'dashboard'], true))) {
+                $links[] = '<a href="index.php?option=com_cspageprotector&amp;view=dashboard">'
+                    . htmlspecialchars(Text::_('PLG_SYSTEM_CSPAGEPROTECTOR_ADMIN_OPEN_DASHBOARD'), ENT_QUOTES, 'UTF-8')
+                    . '</a>';
+            }
+
+            $app->enqueueMessage(
+                htmlspecialchars(implode(' ', $parts), ENT_QUOTES, 'UTF-8')
+                . ($links ? '<br>' . implode(' ', $links) : ''),
+                'warning'
+            );
+        } catch (\Throwable $e) {
+            // A warning that can't be worked out is not worth breaking the admin for.
+        }
     }
 
     /**

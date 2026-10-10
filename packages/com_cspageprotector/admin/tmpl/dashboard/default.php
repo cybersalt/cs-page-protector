@@ -12,6 +12,7 @@
 
 use Cybersalt\Component\Cspageprotector\Administrator\Helper\DisplayHelper;
 use Cybersalt\Component\Cspageprotector\Administrator\Helper\LogHelper;
+use Cybersalt\Component\Cspageprotector\Administrator\Helper\NoticeHelper;
 use Cybersalt\Component\Cspageprotector\Administrator\Helper\ProtectionHelper;
 use Cybersalt\Component\Cspageprotector\Administrator\Helper\SupportHelper;
 use Joomla\CMS\HTML\HTMLHelper;
@@ -26,8 +27,10 @@ $wa->useStyle('com_cspageprotector.admin')->useScript('com_cspageprotector.admin
 HTMLHelper::_('bootstrap.modal');
 Text::script('COM_CSPAGEPROTECTOR_COPIED');
 
+$params = ProtectionHelper::getParams();
+
 // With shortened IPs the copy button copies the range, ready for a firewall rule.
-$ipsShortened = LogHelper::anonymizeEnabled(ProtectionHelper::getParams());
+$ipsShortened = LogHelper::anonymizeEnabled($params);
 
 $logsBase = 'index.php?option=com_cspageprotector&view=logs';
 $logsUrl  = static fn (array $filters = []): string => Route::_(
@@ -57,12 +60,24 @@ $supportUrl   = SupportHelper::getUrl();
 ?>
 <div class="cspp-dashboard">
 
+    <?php echo NoticeHelper::renderBox(); ?>
+
     <div class="alert alert-info">
         <h2 class="alert-heading h4">
             <span class="icon-shield-alt" aria-hidden="true"></span>
             <?php echo $this->escape(Text::_('COM_CSPAGEPROTECTOR_DASHBOARD_INTRO_HEADING')); ?>
         </h2>
-        <p class="mb-0"><?php echo $this->escape(Text::_('COM_CSPAGEPROTECTOR_DASHBOARD_INTRO_BODY')); ?></p>
+        <?php // Until it's accepted, the red box above carries the no-guarantee text. ?>
+        <?php if (!NoticeHelper::isAccepted($params)) : ?>
+            <p class="mb-0"><?php echo $this->escape(Text::_('COM_CSPAGEPROTECTOR_DASHBOARD_INTRO_BODY')); ?></p>
+        <?php else : ?>
+            <p><?php echo $this->escape(Text::_('COM_CSPAGEPROTECTOR_DASHBOARD_INTRO_BODY')); ?></p>
+            <p class="small mb-0">
+                <strong><?php echo $this->escape(Text::_('COM_CSPAGEPROTECTOR_NO_GUARANTEE_LABEL')); ?></strong>
+                <?php echo $this->escape(Text::_('COM_CSPAGEPROTECTOR_NO_GUARANTEE_BODY')); ?>
+                <em><?php echo $this->escape(NoticeHelper::acceptedText($params)); ?></em>
+            </p>
+        <?php endif; ?>
     </div>
 
     <div class="card mb-4">

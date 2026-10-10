@@ -23,8 +23,20 @@ A real visitor sees a short "Checking your browser" step once. Their browser sol
 ## Requirements
 
 - Joomla 5.x or 6.x (PHP 8.1+). Joomla 6.x needs PHP 8.3+.
-- **Joomla 6.1 or later for the core Proof-of-Work captcha.** On Joomla 5 or 6.0, choose another installed captcha plugin.
+- **A working captcha plugin.** Joomla 6.1 and later include the core Proof-of-Work captcha, which is the default. On Joomla 5 or 6.0, choose another installed captcha plugin (see below).
 - MySQL or MariaDB.
+
+### No captcha yet?
+
+Page Protector runs its check through a Joomla captcha plugin, so it can't check anyone until one is installed and enabled. The install screen, the Home Dashboard and every Page Protector admin page warn you while that's the case, and say what it means for your visitors right now.
+
+- **Joomla 6.1 or later:** nothing to do. The installer switches on the core **CAPTCHA - Proof of Work** plugin.
+- **Joomla 5:** the best fix is updating to Joomla 6.1. Until then, Joomla 5's own **CAPTCHA - reCAPTCHA** plugin can be used (it needs free keys from Google, and visitors have to tick a box).
+- **Joomla 6.0:** update to 6.1, or install a captcha plugin from the [Joomla Extensions Directory](https://extensions.joomla.org/) (search for "captcha").
+
+Then pick it under **Options → Challenge → Captcha**. A list of third-party captchas tested with Page Protector is on the way ([#9](https://github.com/cybersalt/cs-page-protector/issues/9)).
+
+While the captcha can't run, the **If the captcha can't run** option decides what protected pages do: let visitors through (the default, so a broken captcha never takes your site down) or block them with an error. Protected modules stay locked either way.
 
 ## Installation
 
@@ -53,6 +65,10 @@ The difficulty of the proof-of-work puzzle is set in the **CAPTCHA - Proof of Wo
 **Behind Cloudflare or another proxy?** Set *Visitor IP comes from* to match, otherwise every visitor looks like the proxy's IP. The dashboard warns you if it spots Cloudflare headers. The header is only believed when the request really comes from the proxy: Cloudflare's published address ranges for Cloudflare, or the addresses you list under *Trusted proxies* for the others (a proxy on the same server or a private network is trusted when that list is empty). Anyone else sending the header is ignored, so nobody can fake an allow-listed address.
 
 ## What it can and can't do
+
+> **No guarantee.** Bots and hackers are persistent. Cybersalt Page Protector does its best to protect your content, but we can't guarantee that bad actors won't find another way around it. As always, if there's information you don't want online, don't put it online.
+
+The same notice is shown in a red box on the install screen and at the top of every Page Protector admin page until someone who can change Options clicks **I understand**. That's needed once per site, and the dashboard then shows who accepted it and when.
 
 Proof of work raises the cost of scraping; it doesn't make scraping impossible. A determined scraper running a real headless browser can solve the puzzle. It just has to pay for it on every pass it collects, and every pass is tied to its browser fingerprint. Pair it with firewall blocks on the IPs the dashboard flags.
 

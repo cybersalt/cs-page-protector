@@ -39,6 +39,14 @@ final class CaptchaHelper
     public const FIELD_NAME = 'cspp_captcha';
 
     /**
+     * Why the configured captcha can't run (getProblem()).
+     */
+    public const PROBLEM_NONE        = '';
+    public const PROBLEM_POW_MISSING = 'pow_missing';
+    public const PROBLEM_MISSING     = 'missing';
+    public const PROBLEM_DISABLED    = 'disabled';
+
+    /**
      * The captcha plugin element configured for the challenge page.
      *
      * @param   Registry  $params  Component params.
@@ -66,6 +74,57 @@ final class CaptchaHelper
     public static function isAvailable(string $plugin): bool
     {
         return $plugin !== '' && PluginHelper::isEnabled('captcha', $plugin);
+    }
+
+    /**
+     * Why the named captcha plugin can't run, or PROBLEM_NONE when it can.
+     * The core Proof-of-Work plugin being absent gets its own answer, because
+     * the fix there is a Joomla update (it ships with 6.1+).
+     *
+     * @param   string  $plugin  Plugin element.
+     *
+     * @return  string  One of the PROBLEM_* constants.
+     *
+     * @since   0.2.0
+     */
+    public static function getProblem(string $plugin): string
+    {
+        if (self::isAvailable($plugin)) {
+            return self::PROBLEM_NONE;
+        }
+
+        if (self::getExtensionId($plugin) === 0) {
+            return $plugin === self::DEFAULT_PLUGIN ? self::PROBLEM_POW_MISSING : self::PROBLEM_MISSING;
+        }
+
+        return self::PROBLEM_DISABLED;
+    }
+
+    /**
+     * Switch an installed captcha plugin on, and drop Joomla's cached plugin
+     * list so it takes effect on the next request.
+     *
+     * @param   string  $plugin  Plugin element.
+     *
+     * @return  void
+     *
+     * @since   0.2.0
+     */
+    public static function enable(string $plugin): void
+    {
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+
+        $db->setQuery(
+            $db->createQuery()
+                ->update($db->quoteName('#__extensions'))
+                ->set($db->quoteName('enabled') . ' = 1')
+                ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
+                ->where($db->quoteName('folder') . ' = ' . $db->quote('captcha'))
+                ->where($db->quoteName('element') . ' = :element')
+                ->bind(':element', $plugin)
+        )->execute();
+
+        ProtectionHelper::cleanCacheGroup('com_plugins');
     }
 
     /**

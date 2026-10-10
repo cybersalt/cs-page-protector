@@ -12,6 +12,7 @@ use Joomla\CMS\Factory;
 use Joomla\CMS\Installer\InstallerAdapter;
 use Joomla\CMS\Installer\InstallerScriptInterface;
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\Session\Session;
 use Joomla\CMS\Uri\Uri;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
@@ -80,9 +81,68 @@ return new class () implements InstallerScriptInterface {
 
         $this->safely(fn () => $this->ensureSalt($db));
 
-        $this->renderInstallCard($type);
+        // On update too: a captcha that was disabled or removed since gets caught here.
+        $captchaProblem = [];
+        $noticeAccepted = false;
+        $this->safely(function () use ($db, &$captchaProblem, &$noticeAccepted) {
+            $params         = $this->loadParams($db);
+            $captchaProblem = $this->findCaptchaProblem($db, $params);
+            $noticeAccepted = (string) $params->get('notice_accepted_at', '') !== '';
+        });
+
+        $this->renderInstallCard($type, $captchaProblem, $noticeAccepted);
+
+        // Joomla shows the manifest description in its own box above the card,
+        // and the card already leads with it. It sets that message before the
+        // install and reads it after postflight, so clearing it here leaves
+        // just the card.
+        $adapter->getParent()->message = '';
 
         return true;
+    }
+
+    /**
+     * The component params, straight from the database (ComponentHelper may
+     * still hold the pre-install copy).
+     */
+    private function loadParams(DatabaseInterface $db): Registry
+    {
+        return new Registry((string) $db->setQuery(
+            $db->createQuery()
+                ->select($db->quoteName('params'))
+                ->from($db->quoteName('#__extensions'))
+                ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
+                ->where($db->quoteName('element') . ' = ' . $db->quote('com_cspageprotector'))
+        )->loadResult());
+    }
+
+    /**
+     * Can the captcha chosen in Options (default: core Proof of Work) run?
+     * Reads the database directly: PluginHelper's list was loaded before
+     * postflight switched anything on.
+     *
+     * @return  array{problem?: string, plugin?: string}  Empty when it can run.
+     */
+    private function findCaptchaProblem(DatabaseInterface $db, Registry $params): array
+    {
+        // Same clean-up as CaptchaHelper::getConfiguredPlugin().
+        $plugin = preg_replace('/[^a-z0-9_]/', '', strtolower((string) $params->get('captcha_plugin', 'powcaptcha'))) ?: 'powcaptcha';
+
+        $enabled = $db->setQuery(
+            $db->createQuery()
+                ->select($db->quoteName('enabled'))
+                ->from($db->quoteName('#__extensions'))
+                ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
+                ->where($db->quoteName('folder') . ' = ' . $db->quote('captcha'))
+                ->where($db->quoteName('element') . ' = :element')
+                ->bind(':element', $plugin)
+        )->loadResult();
+
+        if ($enabled === null) {
+            return ['problem' => $plugin === 'powcaptcha' ? 'pow_missing' : 'missing', 'plugin' => $plugin];
+        }
+
+        return (int) $enabled === 1 ? [] : ['problem' => 'disabled', 'plugin' => $plugin];
     }
 
     /**
@@ -213,7 +273,56 @@ return new class () implements InstallerScriptInterface {
     /**
      * Cybersalt post-install card (JOOMLA-EXTENSION-WISHLIST.md spec).
      */
-    private function renderInstallCard(string $type): void
+    /**
+     * The red "no guarantee" box with its accept button (same as the one at
+     * the top of the Page Protector pages, see NoticeHelper). The card sits
+     * inside the installer's own form, so the button posts a separate form
+     * built by a small script, with the session token, and lands on the
+     * dashboard.
+     *
+     * @param   callable  $e  Translate + escape.
+     */
+    private function renderNotice(callable $e): string
+    {
+        $action = htmlspecialchars('index.php?option=com_cspageprotector&task=dashboard.acceptnotice', ENT_QUOTES, 'UTF-8');
+        $token  = htmlspecialchars(Session::getFormToken(), ENT_QUOTES, 'UTF-8');
+
+        return <<<HTML
+<div class="alert alert-danger mb-3" role="alert">
+    <h4 class="alert-heading h5">{$e('COM_CSPAGEPROTECTOR_NO_GUARANTEE_LABEL')}</h4>
+    <p>{$e('COM_CSPAGEPROTECTOR_NO_GUARANTEE_BODY')}</p>
+    <button type="button" class="btn btn-danger btn-sm cspp-alert-btn" data-cspp-accept="{$action}" data-cspp-token="{$token}">{$e('COM_CSPAGEPROTECTOR_NOTICE_ACCEPT')}</button>
+</div>
+<script>
+if (!window.csppAcceptBound) {
+    window.csppAcceptBound = true;
+    document.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-cspp-accept]');
+        if (!b) { return; }
+        e.preventDefault();
+        b.disabled = true;
+        const f = document.createElement('form');
+        f.method = 'post';
+        f.action = b.dataset.csppAccept;
+        const t = document.createElement('input');
+        t.type = 'hidden';
+        t.name = b.dataset.csppToken;
+        t.value = '1';
+        f.appendChild(t);
+        document.body.appendChild(f);
+        f.submit();
+    });
+}
+</script>
+HTML;
+    }
+
+    /**
+     * @param   string   $type            install|update|discover_install
+     * @param   array    $captchaProblem  From findCaptchaProblem(); empty when the captcha can run.
+     * @param   boolean  $noticeAccepted  The "no guarantee" notice was accepted on this site.
+     */
+    private function renderInstallCard(string $type, array $captchaProblem, bool $noticeAccepted): void
     {
         $e = static fn (string $key): string => htmlspecialchars(Text::_($key), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 
@@ -222,6 +331,29 @@ return new class () implements InstallerScriptInterface {
         $description = Text::_('PKG_CSPAGEPROTECTOR_XML_DESCRIPTION');
         $nextSteps   = $type === 'update' ? '' : '<p class="mb-3">' . $e('PKG_CSPAGEPROTECTOR_CARD_NEXT_STEPS') . '</p>';
         $powNote     = $this->enabledPow ? '<p class="mb-3">' . $e('PKG_CSPAGEPROTECTOR_CARD_POW_ENABLED') . '</p>' : '';
+        $noGuarantee = $noticeAccepted ? '' : $this->renderNotice($e);
+
+        $captchaWarning = '';
+        $btnUpdate      = '';
+
+        if ($captchaProblem !== []) {
+            $plugin = (string) $captchaProblem['plugin'];
+            $text   = match ($captchaProblem['problem']) {
+                'pow_missing' => Text::sprintf('PKG_CSPAGEPROTECTOR_CARD_POW_MISSING', JVERSION),
+                'missing'     => Text::sprintf('PKG_CSPAGEPROTECTOR_CARD_CAPTCHA_MISSING', $plugin),
+                default       => Text::sprintf('PKG_CSPAGEPROTECTOR_CARD_CAPTCHA_DISABLED', $plugin),
+            };
+
+            $captchaWarning = '<div class="alert alert-warning mb-3"><strong>'
+                . $e('PKG_CSPAGEPROTECTOR_CARD_NO_CAPTCHA_HEADING') . '</strong> '
+                . htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . ' '
+                . $e('PKG_CSPAGEPROTECTOR_CARD_NO_CAPTCHA_UNTIL') . '</div>';
+
+            if ($captchaProblem['problem'] === 'pow_missing') {
+                $btnUpdate = '<a class="btn btn-sm cs-cybersalt-btn" href="index.php?option=com_joomlaupdate">'
+                    . $e('PKG_CSPAGEPROTECTOR_CARD_JOOMLA_UPDATE') . '</a>';
+            }
+        }
 
         $btnDashboard = $e('PKG_CSPAGEPROTECTOR_CARD_OPEN_DASHBOARD');
         $btnPages     = $e('PKG_CSPAGEPROTECTOR_CARD_CHOOSE_PAGES');
@@ -280,6 +412,27 @@ html[data-color-scheme="dark"] .cs-install-card .cs-card-header img {
     border-color: #dc6b1a;
     color: #fff !important;
 }
+/* Button inside the red notice: same rules as DisplayHelper::ALERT_BUTTON_CSS. */
+.cs-install-card .cspp-alert-btn {
+    border: 2px solid #1f2937 !important;
+    font-weight: 600;
+}
+.cs-install-card .cspp-alert-btn:hover,
+.cs-install-card .cspp-alert-btn:focus {
+    filter: brightness(0.9);
+}
+html[data-bs-theme="dark"] .cs-install-card .cspp-alert-btn,
+html[data-color-scheme="dark"] .cs-install-card .cspp-alert-btn {
+    background-color: var(--primary, #007db0) !important;
+    color: #fff !important;
+    border-color: #1f2937 !important;
+}
+html[data-bs-theme="dark"] .cs-install-card .cspp-alert-btn:hover,
+html[data-color-scheme="dark"] .cs-install-card .cspp-alert-btn:hover,
+html[data-bs-theme="dark"] .cs-install-card .cspp-alert-btn:focus,
+html[data-color-scheme="dark"] .cs-install-card .cspp-alert-btn:focus {
+    filter: brightness(1.15);
+}
 .cs-install-card a.cs-cybersalt-btn:hover,
 .cs-install-card a.cs-cybersalt-btn:focus,
 .cs-install-card a.cs-cybersalt-btn:active {
@@ -295,12 +448,15 @@ html[data-color-scheme="dark"] .cs-install-card .cs-card-header img {
     </div>
     <div class="card-body">
         <p class="lead mb-3">{$description}</p>
+        {$noGuarantee}
+        {$captchaWarning}
         {$powNote}
         {$nextSteps}
         <p class="mb-0 d-flex flex-wrap gap-2">
             <a class="btn btn-sm cs-cybersalt-btn" href="{$optionsUrl}">{$btnPages}</a>
             <a class="btn btn-sm cs-cybersalt-btn" href="{$dashboardUrl}">{$btnDashboard}</a>
             <a class="btn btn-sm cs-cybersalt-btn" href="{$captchaUrl}">{$btnCaptcha}</a>
+            {$btnUpdate}
         </p>
         <hr>
         <p class="text-muted small mb-0">

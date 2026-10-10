@@ -60,6 +60,19 @@ final class PermissionHelper
     }
 
     /**
+     * May change Options (what Joomla's com_config itself requires). Used for
+     * site-wide decisions such as accepting the "no guarantee" notice.
+     *
+     * @return  boolean
+     *
+     * @since   0.2.0
+     */
+    public static function canConfigure(): bool
+    {
+        return self::authorise('core.options') || self::authorise('core.admin');
+    }
+
+    /**
      * Throw when the current user may not view.
      *
      * @return  void
@@ -103,6 +116,22 @@ final class PermissionHelper
     public static function requireAdmin(): void
     {
         if (!self::canAdmin()) {
+            throw new NotAllowed(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+        }
+    }
+
+    /**
+     * Throw when the current user may not change Options.
+     *
+     * @return  void
+     *
+     * @throws  NotAllowed
+     *
+     * @since   0.2.0
+     */
+    public static function requireConfigure(): void
+    {
+        if (!self::canConfigure()) {
             throw new NotAllowed(Text::_('JERROR_ALERTNOAUTHOR'), 403);
         }
     }

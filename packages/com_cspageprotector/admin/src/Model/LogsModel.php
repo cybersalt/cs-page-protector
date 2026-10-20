@@ -325,7 +325,8 @@ final class LogsModel extends ListModel
     {
         return implode(',', array_map(
             static function (string $value): string {
-                $value = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F]/', '', $value) ?? '';
+                // Drop control characters except tab, newline and carriage return.
+                $value = preg_replace('/(?![\t\n\r])[[:cntrl:]]/', '', $value) ?? '';
 
                 if ($value !== '' && strpbrk($value[0], "=+-@\t\r") !== false) {
                     $value = "'" . $value;

@@ -346,11 +346,11 @@ $supportUrl   = SupportHelper::getUrl();
                         <?php endif; ?>
                         <li class="mb-1">
                             <span class="icon-book" aria-hidden="true"></span>
-                            <a href="<?php echo $this->escape(SupportHelper::REPO_URL . '#readme'); ?>" target="_blank" rel="noopener noreferrer"><?php echo $this->escape(Text::_('COM_CSPAGEPROTECTOR_SUPPORT_DOCS')); ?></a>
+                            <a href="<?php echo $this->escape(SupportHelper::DOCS_URL); ?>" target="_blank" rel="noopener noreferrer"><?php echo $this->escape(Text::_('COM_CSPAGEPROTECTOR_SUPPORT_DOCS')); ?></a>
                         </li>
                         <li class="mb-1">
                             <span class="icon-list" aria-hidden="true"></span>
-                            <a href="<?php echo $this->escape(SupportHelper::REPO_URL . '/blob/main/CHANGELOG.md'); ?>" target="_blank" rel="noopener noreferrer"><?php echo $this->escape(Text::_('COM_CSPAGEPROTECTOR_SUPPORT_CHANGELOG')); ?></a>
+                            <a href="<?php echo $this->escape(SupportHelper::DOCS_URL . '/changelog'); ?>" target="_blank" rel="noopener noreferrer"><?php echo $this->escape(Text::_('COM_CSPAGEPROTECTOR_SUPPORT_CHANGELOG')); ?></a>
                         </li>
                         <li>
                             <span class="icon-bug" aria-hidden="true"></span>

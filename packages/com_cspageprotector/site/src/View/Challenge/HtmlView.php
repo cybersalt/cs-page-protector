@@ -69,6 +69,11 @@ final class HtmlView extends BaseHtmlView
 
         $this->itemId     = ProtectionHelper::getActiveItemId($app);
 
+        // The page to go back to after the check, passed as base64 the same
+        // way Joomla core passes its "return" URLs.
+        $decoded   = base64_decode($input->getBase64('cspp_return', ''), true);
+        $returnUrl = \is_string($decoded) ? $decoded : '';
+
         // Reached through a protected module's "Show content" button rather
         // than the in-place page check (which the plugin already logged).
         if ($input->getInt('cspp_inplace', 0) !== 1) {
@@ -77,14 +82,13 @@ final class HtmlView extends BaseHtmlView
                 LogHelper::EVENT_CHALLENGED,
                 IpHelper::getClientIp($params),
                 $input->server->getString('HTTP_USER_AGENT', ''),
-                (string) (base64_decode($input->getBase64('cspp_return', ''), true) ?: Uri::getInstance()->toString()),
+                $returnUrl !== '' ? $returnUrl : Uri::getInstance()->toString(),
                 $this->itemId,
                 CaptchaHelper::getConfiguredPlugin($params),
                 'module'
             );
         }
-        $decoded          = base64_decode($input->getBase64('cspp_return', ''), true);
-        $this->returnB64  = base64_encode(ProtectionHelper::safeReturnUrl(\is_string($decoded) ? $decoded : ''));
+        $this->returnB64  = base64_encode(ProtectionHelper::safeReturnUrl($returnUrl));
         $this->autoStart  = (int) $params->get('auto_start', 1) === 1;
         $this->autoSubmit = (int) $params->get('auto_submit', 1) === 1;
         $this->formAction = Route::_('index.php?option=com_cspageprotector&task=challenge.verify' . ($this->itemId ? '&Itemid=' . $this->itemId : ''));

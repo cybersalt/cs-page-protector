@@ -420,7 +420,8 @@ final class ProtectionHelper
     {
         $fallback = Uri::root();
 
-        if ($url === '' || preg_match('/[\x00-\x1F\x7F\\\\]/', $url)) {
+        // Control characters (ASCII 0-31 and 127) or a backslash: refuse.
+        if ($url === '' || preg_match('/[[:cntrl:]\\\\]/', $url)) {
             return $fallback;
         }
 

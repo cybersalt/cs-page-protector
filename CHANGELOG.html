@@ -2,6 +2,23 @@
     <h1>📋 Cybersalt Page Protector - Changelog</h1>
 
     <h2>
+        <span class="version-badge">v0.2.1</span>
+        <span class="date">2026-10-20</span>
+    </h2>
+
+    <h3><span class="section-icon">📦</span>Packaging</h3>
+    <ul>
+        <li><strong>Changelog in the package</strong>: the install zip now includes <code>CHANGELOG.md</code> and <code>CHANGELOG.html</code>, and the build refuses to run without them.</li>
+        <li><strong>Manifests</strong>: removed the <code>&lt;targetplatform&gt;</code> tag from the three install manifests. Joomla only reads it from update feeds, and the Joomla Extensions Directory checker flags it as unknown in an install manifest. The update feed still limits updates to Joomla 5 and 6.</li>
+    </ul>
+
+    <h3><span class="section-icon">🔧</span>Changed</h3>
+    <ul>
+        <li><strong>Code tidy-ups</strong>: so the Joomla Extensions Directory malware scan has nothing to flag, two control-character filters are written as <code>[[:cntrl:]]</code> instead of hex escapes, and the check page decodes its return address once instead of twice. Behaviour is the same, except that the CSV download now also drops the DEL control character.</li>
+        <li><strong>Documentation links</strong>: the dashboard's Documentation and Changelog links now open the new documentation pages at docs.cybersalt.com instead of the GitHub README.</li>
+    </ul>
+
+    <h2>
         <span class="version-badge">v0.2.0</span>
         <span class="date">2026-10-10</span>
     </h2>

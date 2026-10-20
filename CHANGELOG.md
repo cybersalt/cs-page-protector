@@ -2,6 +2,16 @@
 
 All notable changes to Cybersalt Page Protector are documented here. Only released versions are listed. People whose ideas or reports shaped a change are credited on that entry.
 
+## [0.2.1] - 2026-10-20
+
+### 📦 Packaging
+- The install zip now includes `CHANGELOG.md` and `CHANGELOG.html`, and the build refuses to run without them.
+- Removed the `<targetplatform>` tag from the three install manifests. Joomla only reads it from update feeds, and the Joomla Extensions Directory checker flags it as unknown in an install manifest. The update feed still limits updates to Joomla 5 and 6.
+
+### 🔧 Changed
+- Code tidy-ups so the Joomla Extensions Directory malware scan has nothing to flag: two control-character filters are written as `[[:cntrl:]]` instead of hex escapes, and the check page decodes its return address once instead of twice. Behaviour is the same, except that the CSV download now also drops the DEL control character.
+- The dashboard's Documentation and Changelog links now open the new documentation pages at docs.cybersalt.com instead of the GitHub README.
+
 ## [0.2.0] - 2026-10-10
 
 ### 🚀 New

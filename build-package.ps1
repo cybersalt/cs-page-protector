@@ -147,6 +147,17 @@ Copy-Item (Join-Path $pkgDir "script.php") (Join-Path $pkgStage "script.php")
 Remove-Item (Join-Path $pkgStage "language") -Recurse -Force
 Copy-Item (Join-Path $pkgDir "language") (Join-Path $pkgStage "language") -Recurse
 
+# Every release zip carries the full changelog in both formats
+# (VERSION-BUMP-CHECKLIST). Refuse to build without them.
+foreach ($log in @("CHANGELOG.md", "CHANGELOG.html")) {
+    $logPath = Join-Path $scriptDir $log
+    if (-not (Test-Path $logPath)) { throw "$log is missing from the repo root." }
+    if ((Get-Content $logPath -Raw) -notmatch [regex]::Escape($Version)) {
+        throw "$log has no entry for $Version."
+    }
+    Copy-Item $logPath (Join-Path $pkgStage $log)
+}
+
 # 3. Zip the whole package.
 Push-Location $pkgStage
 try {

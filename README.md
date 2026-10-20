@@ -4,6 +4,8 @@
 
 Put a proof-of-work check in front of the Joomla pages you choose, so scrapers have to spend real computing time before they get your content.
 
+**[Documentation](https://docs.cybersalt.com/extensions/page-protector)** · **[Product page and download](https://www.cybersalt.com/extensions/page-protector)** · **[Changelog](https://docs.cybersalt.com/extensions/page-protector/changelog)** · **[Support](https://www.cybersalt.com/services/support-request-form)**
+
 A real visitor sees a short "Checking your browser" step once. Their browser solves a small puzzle in about a second, they get a pass, and they browse every protected page normally until the pass expires. A scraper pulling thousands of pages has to solve that puzzle again and again. Scrapers that don't run JavaScript or keep cookies never get the content at all.
 
 ## What it does
@@ -23,7 +25,7 @@ A real visitor sees a short "Checking your browser" step once. Their browser sol
 ## Requirements
 
 - Joomla 5.x or 6.x (PHP 8.1+). Joomla 6.x needs PHP 8.3+.
-- **A working captcha plugin.** Joomla 6.1 and later include the core Proof-of-Work captcha, which is the default. On Joomla 5 or 6.0, choose another installed captcha plugin (see below).
+- **A working captcha plugin.** Joomla 6.1 and later include the core Proof-of-Work captcha, which is the default. Joomla 5 and 6.0 ship without any captcha plugin, so on those versions install one first (see below).
 - MySQL or MariaDB.
 
 ### No captcha yet?
@@ -31,8 +33,7 @@ A real visitor sees a short "Checking your browser" step once. Their browser sol
 Page Protector runs its check through a Joomla captcha plugin, so it can't check anyone until one is installed and enabled. The install screen, the Home Dashboard and every Page Protector admin page warn you while that's the case, and say what it means for your visitors right now.
 
 - **Joomla 6.1 or later:** nothing to do. The installer switches on the core **CAPTCHA - Proof of Work** plugin.
-- **Joomla 5:** the best fix is updating to Joomla 6.1. Until then, Joomla 5's own **CAPTCHA - reCAPTCHA** plugin can be used (it needs free keys from Google, and visitors have to tick a box).
-- **Joomla 6.0:** update to 6.1, or install a captcha plugin from the [Joomla Extensions Directory](https://extensions.joomla.org/) (search for "captcha").
+- **Joomla 5 or 6.0:** the best fix is updating to Joomla 6.1 or later. Joomla 5 and 6.0 don't include a captcha plugin (the old reCAPTCHA plugin was removed from core in Joomla 5), so until you update, install a captcha plugin from the [Joomla Extensions Directory](https://extensions.joomla.org/) (search for "captcha"). Most of those use an outside service with its own keys, and visitors usually have to click something.
 
 Then pick it under **Options → Challenge → Captcha**. A list of third-party captchas tested with Page Protector is on the way ([#9](https://github.com/cybersalt/cs-page-protector/issues/9)).
 
@@ -128,4 +129,4 @@ GNU General Public License version 2 or later. See [LICENSE](LICENSE).
 
 ## Author
 
-[Cybersalt](https://cybersalt.com) · support@cybersalt.com
+[Cybersalt](https://www.cybersalt.com) · [Support request form](https://www.cybersalt.com/services/support-request-form) · support@cybersalt.com · [Bug reports and ideas](https://github.com/cybersalt/cs-page-protector/issues)

@@ -29,6 +29,7 @@ final class SupportHelper
     public const DEFAULT_EMAIL = 'support@cybersalt.com';
     public const DEFAULT_URL   = 'https://www.cybersalt.com/services/support-request-form';
     public const REPO_URL      = 'https://github.com/cybersalt/cs-page-protector';
+    public const DOCS_URL      = 'https://docs.cybersalt.com/extensions/page-protector';
 
     /**
      * "Please contact Cybersalt support (support@... / https://...) for assistance."

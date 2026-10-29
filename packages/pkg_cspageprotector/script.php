@@ -126,7 +126,7 @@ return new class () implements InstallerScriptInterface {
     private function findCaptchaProblem(DatabaseInterface $db, Registry $params): array
     {
         // Same clean-up as CaptchaHelper::getConfiguredPlugin().
-        $plugin = preg_replace('/[^a-z0-9_]/', '', strtolower((string) $params->get('captcha_plugin', 'powcaptcha'))) ?: 'powcaptcha';
+        $plugin = preg_replace('/[^a-z0-9_]/', '', strtr((string) $params->get('captcha_plugin', 'powcaptcha'), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')) ?: 'powcaptcha';
 
         $enabled = $db->setQuery(
             $db->createQuery()

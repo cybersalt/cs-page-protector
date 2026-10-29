@@ -23,3 +23,6 @@ composer.lock
 
 ## Test artefacts
 .playwright-mcp/
+
+## Local test builds and review artefacts (never committed)
+/build-test/

@@ -15,11 +15,16 @@ namespace Cybersalt\Component\Cspageprotector\Administrator\Rule;
 use Cybersalt\Component\Cspageprotector\Administrator\Helper\ProtectionHelper;
 use Joomla\CMS\Form\Form;
 use Joomla\CMS\Form\FormRule;
+use Joomla\CMS\Language\Text;
 use Joomla\Registry\Registry;
 
 /**
  * "Also protect these views": every entry must be component:view, so a typo
- * is refused on save instead of silently protecting nothing.
+ * is refused on save instead of silently protecting nothing. Entries that
+ * would lock visitors or payment providers out of pages they need (login,
+ * registration, password reset, privacy, payment returns and callbacks), or
+ * that could never do anything (com_ajax, this component), are refused with
+ * the reason.
  *
  * @since  __DEPLOY_VERSION__
  */
@@ -34,10 +39,37 @@ final class ProtectviewsRule extends FormRule
      *
      * @return  boolean
      *
+     * @throws  \UnexpectedValueException  With the reason, for refused entries (Form shows its message).
+     *
      * @since   __DEPLOY_VERSION__
      */
     public function test(\SimpleXMLElement $element, $value, $group = null, ?Registry $input = null, ?Form $form = null)
     {
-        return ProtectionHelper::parseViewList((string) $value)['invalid'] === [];
+        if ($value === null || $value === '') {
+            return true;
+        }
+
+        // Options sends a string; the Web Services API can send anything.
+        if (!\is_string($value)) {
+            return false;
+        }
+
+        $parsed = ProtectionHelper::parseViewList($value);
+
+        if ($parsed['invalid'] !== []) {
+            return false;
+        }
+
+        // Entries in these lists matched VIEW_ENTRY_PATTERN, so they hold
+        // nothing but [a-z0-9_:].
+        if ($parsed['reserved'] !== []) {
+            throw new \UnexpectedValueException(Text::sprintf('COM_CSPAGEPROTECTOR_FIELD_PROTECT_VIEWS_RESERVED', implode(', ', $parsed['reserved'])));
+        }
+
+        if ($parsed['unchecked'] !== []) {
+            throw new \UnexpectedValueException(Text::sprintf('COM_CSPAGEPROTECTOR_FIELD_PROTECT_VIEWS_NEVER_CHECKED', implode(', ', $parsed['unchecked'])));
+        }
+
+        return true;
     }
 }

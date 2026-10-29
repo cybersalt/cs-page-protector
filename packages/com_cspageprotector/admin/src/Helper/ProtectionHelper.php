@@ -16,9 +16,13 @@ use Joomla\CMS\Application\CMSApplicationInterface;
 use Joomla\CMS\Cache\CacheControllerFactoryInterface;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
+use Joomla\CMS\MVC\Controller\BaseController;
+use Joomla\CMS\MVC\Factory\MVCFactory;
+use Joomla\CMS\MVC\Factory\MVCFactoryServiceInterface;
 use Joomla\CMS\Uri\Uri;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
+use Joomla\Input\Input;
 use Joomla\Registry\Registry;
 
 /**
@@ -61,6 +65,36 @@ final class ProtectionHelper
      * @since  __DEPLOY_VERSION__
      */
     public const VIEW_ENTRY_PATTERN = '/^com_[a-z0-9_]+:[a-z0-9_.-]+$/';
+
+    /**
+     * Components "Also protect these views" refuses: their pages have to stay
+     * reachable for visitors who haven't passed (logging in, registering,
+     * resetting a password, privacy consent, front-end site settings).
+     *
+     * @var    string[]
+     * @since  __DEPLOY_VERSION__
+     */
+    private const RESERVED_VIEW_OPTIONS = ['com_users', 'com_config', 'com_privacy'];
+
+    /**
+     * View names "Also protect these views" refuses in any component: payment
+     * returns and server-to-server callbacks, which a payment provider can't
+     * answer a check on.
+     *
+     * @var    string
+     * @since  __DEPLOY_VERSION__
+     */
+    private const RESERVED_VIEW_PATTERN = '/(notify|notification|callback|webhook|postback|response|vmplg|checkout|payment|^ipn|ipn$)/';
+
+    /**
+     * Request keys that are a single value on every real page. An array in
+     * any of them can't be matched against the protected pages (a component
+     * may still turn it into one), so such a request is treated as protected.
+     *
+     * @var    string[]
+     * @since  __DEPLOY_VERSION__
+     */
+    private const SINGLE_VALUE_KEYS = ['option', 'view', 'id', 'Itemid', 'task', 'controller', 'layout', 'format'];
 
     /**
      * Components whose lists are categories. A protected category list of one
@@ -158,8 +192,8 @@ final class ProtectionHelper
 
     /**
      * "Also protect these views" ("selected" mode only): component:view
-     * entries, lower case. Invalid entries are left out (Options refuses to
-     * save them, see ProtectviewsRule).
+     * entries, lower case. Invalid and refused entries are left out (Options
+     * refuses to save them, see ProtectviewsRule).
      *
      * @param   Registry  $params  Component params.
      *
@@ -177,37 +211,128 @@ final class ProtectionHelper
     }
 
     /**
-     * Split an "Also protect these views" value into valid and invalid
-     * entries. One entry per line (commas also separate); "#" starts a comment
-     * that runs to the end of its line, so a commented-out line never leaves a
-     * live entry behind.
+     * Split an "Also protect these views" value into its entries. One entry
+     * per line (commas also separate); "#" starts a comment that runs to the
+     * end of its line, so a commented-out line never leaves a live entry
+     * behind.
+     *
+     * - valid: usable entries, as option:view with the view name reduced to
+     *   the characters Joomla keeps when it loads a view ([a-z0-9_]);
+     * - invalid: not written as component:view;
+     * - reserved: pages that must stay reachable without the check (login,
+     *   registration, password reset, privacy, front-end settings, payment
+     *   returns and callbacks);
+     * - unchecked: com_ajax and this component, which are never checked, so
+     *   the entry could never do anything.
      *
      * @param   string  $text  Field value.
      *
-     * @return  array{valid: string[], invalid: string[]}
+     * @return  array{valid: string[], invalid: string[], reserved: string[], unchecked: string[]}
      *
      * @since   __DEPLOY_VERSION__
      */
     public static function parseViewList(string $text): array
     {
-        $valid   = [];
-        $invalid = [];
+        $result = ['valid' => [], 'invalid' => [], 'reserved' => [], 'unchecked' => []];
 
         foreach (preg_split('/\R/', $text) ?: [] as $line) {
             $line = trim((string) preg_replace('/#.*$/', '', $line));
 
             foreach (preg_split('/[\s,]+/', $line, -1, PREG_SPLIT_NO_EMPTY) ?: [] as $entry) {
-                $normalised = strtolower($entry);
+                $normalised = self::asciiLower($entry);
 
-                if (preg_match(self::VIEW_ENTRY_PATTERN, $normalised)) {
-                    $valid[] = $normalised;
+                if (!preg_match(self::VIEW_ENTRY_PATTERN, $normalised)) {
+                    $result['invalid'][] = $entry;
+
+                    continue;
+                }
+
+                [$option, $view] = explode(':', $normalised, 2);
+                $view            = self::normaliseName($view);
+
+                if ($view === '') {
+                    $result['invalid'][] = $entry;
+
+                    continue;
+                }
+
+                $key = $option . ':' . $view;
+
+                if (\in_array($option, self::ALWAYS_ALLOWED_OPTIONS, true)) {
+                    $result['unchecked'][] = $key;
+                } elseif (\in_array($option, self::RESERVED_VIEW_OPTIONS, true) || preg_match(self::RESERVED_VIEW_PATTERN, $view)) {
+                    $result['reserved'][] = $key;
                 } else {
-                    $invalid[] = $entry;
+                    $result['valid'][] = $key;
                 }
             }
         }
 
-        return ['valid' => array_values(array_unique($valid)), 'invalid' => $invalid];
+        foreach (['valid', 'reserved', 'unchecked'] as $list) {
+            $result[$list] = array_values(array_unique($result[$list]));
+        }
+
+        return $result;
+    }
+
+    /**
+     * Lower-case ASCII letters only. strtolower() follows the locale on PHP
+     * 8.1 (a Turkish locale turns "I" into a dotless i), and every name
+     * compared here is ASCII.
+     *
+     * @param   string  $text  Text to lower-case.
+     *
+     * @return  string
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    public static function asciiLower(string $text): string
+    {
+        return strtr($text, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz');
+    }
+
+    /**
+     * A view or controller name the way Joomla uses it to load the class:
+     * lower case, letters, digits and underscores only (MVCFactory strips
+     * everything else, so "con.tact" loads the "contact" view).
+     *
+     * @param   string  $name  Name from the request or a menu link.
+     *
+     * @return  string
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    public static function normaliseName(string $name): string
+    {
+        return (string) preg_replace('/[^a-z0-9_]/', '', self::asciiLower($name));
+    }
+
+    /**
+     * A request value that has to be a single value: the value through the
+     * given filter, or null when it was sent as an array (or object).
+     *
+     * @param   Input   $input    The request input.
+     * @param   string  $key      Request key.
+     * @param   string  $filter   Input filter, e.g. "cmd", "word".
+     * @param   string  $default  Value when the key is missing.
+     *
+     * @return  string|null
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    public static function singleValue(Input $input, string $key, string $filter = 'cmd', string $default = ''): ?string
+    {
+        $raw = $input->get($key, null, 'raw');
+
+        if ($raw === null) {
+            return $default;
+        }
+
+        if (!\is_scalar($raw)) {
+            return null;
+        }
+
+        return (string) $input->get($key, $default, $filter);
     }
 
     /**
@@ -384,8 +509,61 @@ final class ProtectionHelper
             return (int) $active->id;
         }
 
-        return $app->getInput()->getInt('Itemid', 0);
+        // Itemid[]=… is an array: no menu item (the request is protected
+        // anyway, see SINGLE_VALUE_KEYS), and never a TypeError.
+        return (int) (self::singleValue($app->getInput(), 'Itemid', 'int', '0') ?? 0);
     }
+
+    /**
+     * Protected menu item ids ("selected" mode): the ones picked in Options
+     * plus their language associations, so the French copy of a protected
+     * page is protected too.
+     *
+     * @param   Registry  $params  Component params.
+     *
+     * @return  int[]
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    public static function getProtectedMenuItemIds(Registry $params): array
+    {
+        $ids = self::getMenuItemIds($params);
+        $key = implode(',', $ids);
+
+        if ($ids === [] || isset(self::$associationMemo[$key])) {
+            return $ids === [] ? [] : self::$associationMemo[$key];
+        }
+
+        $all = $ids;
+
+        try {
+            $db    = Factory::getContainer()->get(DatabaseInterface::class);
+            $query = $db->createQuery()
+                ->select($db->quoteName('b.id'))
+                ->from($db->quoteName('#__associations', 'a'))
+                ->join(
+                    'INNER',
+                    $db->quoteName('#__associations', 'b'),
+                    $db->quoteName('b.key') . ' = ' . $db->quoteName('a.key') . ' AND ' . $db->quoteName('b.context') . ' = ' . $db->quoteName('a.context')
+                )
+                ->where($db->quoteName('a.context') . ' = ' . $db->quote('com_menus.item'))
+                ->whereIn($db->quoteName('a.id'), $ids, ParameterType::INTEGER);
+
+            $all = array_merge($all, array_map('intval', $db->setQuery($query)->loadColumn() ?: []));
+        } catch (\Throwable $e) {
+            // No associations table or no database: the picked items still count.
+        }
+
+        return self::$associationMemo[$key] = array_values(array_unique(array_filter($all, static fn (int $id): bool => $id > 0)));
+    }
+
+    /**
+     * Memoised getProtectedMenuItemIds() results, keyed by the picked ids.
+     *
+     * @var    array<string, int[]>
+     * @since  __DEPLOY_VERSION__
+     */
+    private static array $associationMemo = [];
 
     /**
      * Why (if at all) is this visitor allowed through without a challenge?
@@ -444,71 +622,440 @@ final class ProtectionHelper
             return false;
         }
 
-        $option = $app->getInput()->getCmd('option', '');
+        $input  = $app->getInput();
+        $option = self::singleValue($input, 'option');
 
-        if ($option === '' || \in_array($option, self::ALWAYS_ALLOWED_OPTIONS, true)) {
+        if ($option !== null) {
+            $option = self::asciiLower($option);
+
+            if ($option === '' || \in_array($option, self::ALWAYS_ALLOWED_OPTIONS, true)) {
+                return false;
+            }
+        }
+
+        if (!self::hasPageProtection($params)) {
             return false;
         }
 
-        // id[]=1 style requests: components cast them to an item, but our
-        // matching can't, so treat them as protected (fail closed).
-        if (\is_array($app->getInput()->get('id', null, 'raw'))) {
-            return true;
+        // option[]=…, view[]=…, id[]=1, Itemid[]=… and the like: a component
+        // may still turn them into a page, but they can't be matched against
+        // the protected ones, so treat them as protected (fail closed).
+        foreach (self::SINGLE_VALUE_KEYS as $key) {
+            if (self::singleValue($input, $key) === null) {
+                return true;
+            }
         }
 
         $configured = self::getMenuItemIds($params);
-        $itemId     = self::getActiveItemId($app);
 
         if ((string) $params->get('protection_mode', self::MODE_SELECTED) === self::MODE_ALL_EXCEPT) {
             // Only honour an exclusion when the request really IS that page.
             // A matching Itemid alone isn't enough: Joomla falls back to the
             // default menu item for unrouted URLs, and an Itemid can be bolted
             // onto any URL, so excluding Home must not open every article.
-            return !self::isExcludedRequest($app, $configured);
+            return !self::isExcludedRequest($app, $configured, (string) $option);
         }
 
-        $views = self::getProtectedViews($params);
+        $protected = self::getProtectedMenuItemIds($params);
+        $views     = self::getProtectedViews($params);
 
-        if ($configured === [] && $views === []) {
+        if ($protected === [] && $views === []) {
             return false;
         }
 
-        if ($itemId > 0 && \in_array($itemId, $configured, true)) {
+        $itemId = self::getActiveItemId($app);
+
+        if ($itemId > 0 && \in_array($itemId, $protected, true)) {
             return true;
         }
+
+        // The rules below only ever match a component that has something
+        // protected, so leave every other component alone (and unread).
+        $option    = (string) $option;
+        $views     = array_values(array_filter($views, static fn (string $entry): bool => str_starts_with($entry, $option . ':')));
+        $protected = (int) $params->get('match_content', 1) === 1 ? self::itemsOfComponent($app, $protected, $option) : [];
+
+        if ($views === [] && $protected === []) {
+            return false;
+        }
+
+        $request = self::describeRequest($app, $option);
 
         // "Also protect these views": whatever the Itemid, or none.
-        if ($views !== [] && self::matchesProtectedView($app, $views)) {
+        if ($views !== [] && self::matchesProtectedView($app, $request, $views)) {
             return true;
         }
 
-        if ($configured === [] || (int) $params->get('match_content', 1) !== 1) {
-            return false;
-        }
-
-        return self::matchesProtectedContent($app, $configured);
+        return $protected !== [] && self::matchesProtectedContent($app, $protected, $request);
     }
 
     /**
-     * Is the request for one of the "Also protect these views" views?
+     * The menu items (of the given ids) that belong to a component.
      *
-     * @param   CMSApplicationInterface  $app    The application.
-     * @param   string[]                 $views  From getProtectedViews().
+     * @param   CMSApplicationInterface  $app     The application.
+     * @param   int[]                    $ids     Menu item ids.
+     * @param   string                   $option  Component, lower case.
+     *
+     * @return  int[]
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function itemsOfComponent(CMSApplicationInterface $app, array $ids, string $option): array
+    {
+        if ($ids === [] || !method_exists($app, 'getMenu')) {
+            return [];
+        }
+
+        $menu = $app->getMenu();
+
+        return array_values(array_filter($ids, static function (int $id) use ($menu, $option): bool {
+            $item = $menu->getItem($id);
+
+            return $item && self::asciiLower(self::queryString((array) ($item->query ?? []), 'option')) === $option;
+        }));
+    }
+
+    /**
+     * The parts of the request the rules match on: component, the view
+     * Joomla will show (see resolveView()) and id.
+     *
+     * @param   CMSApplicationInterface  $app     The application.
+     * @param   string                   $option  Request component, lower case.
+     *
+     * @return  array{option: string, view: ?string, id: int}
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function describeRequest(CMSApplicationInterface $app, string $option): array
+    {
+        $input = $app->getInput();
+
+        return [
+            'option' => $option,
+            'view'   => self::resolveView(
+                $app,
+                $option,
+                (string) self::singleValue($input, 'view'),
+                (string) self::singleValue($input, 'task'),
+                (string) self::singleValue($input, 'controller')
+            ),
+            'id'     => (int) (self::singleValue($input, 'id', 'int', '0') ?? 0),
+        ];
+    }
+
+    /**
+     * The view a request shows, worked out the way Joomla picks it, so a
+     * request can't step around a view rule by leaving `view` out:
+     *
+     * - ComponentDispatcher runs `task=<controller>.<method>` (or
+     *   `controller=` plus `task=<method>`). A method the controller has,
+     *   other than display(), runs instead of a page view;
+     * - otherwise display() runs (a method the controller doesn't have falls
+     *   back to it as well) and shows `view`, or with no `view` the view
+     *   named after the controller.
+     *
+     * The result is null when the request runs a real task that isn't
+     * display() (a form submit, a payment callback, an AJAX call), so the
+     * view rules never touch those. It is '' when the page is the
+     * component's own default view, or a component whose controllers can't
+     * be read (older, non-namespaced components): the rules then treat the
+     * request as any view of that component, unless it is exactly the page
+     * of the menu item it was opened under.
+     *
+     * @param   CMSApplicationInterface  $app         The application.
+     * @param   string                   $option      Component, lower case.
+     * @param   string                   $view        `view` value.
+     * @param   string                   $task        `task` value.
+     * @param   string                   $controller  `controller` value.
+     *
+     * @return  string|null
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    public static function resolveView(CMSApplicationInterface $app, string $option, string $view, string $task, string $controller): ?string
+    {
+        $view = self::normaliseName($view);
+
+        // ComponentDispatcher::dispatch(): "controller.method", else the
+        // `controller` value (default "display") and the task as the method.
+        if (str_contains($task, '.')) {
+            $parts      = explode('.', $task);
+            $controller = $parts[0];
+            $method     = $parts[1];
+            $named      = true;
+        } else {
+            $method = $task === '' ? 'display' : $task;
+            $named  = $controller !== '';
+        }
+
+        $method     = self::asciiLower($method);
+        $controller = self::normaliseName($controller);
+        $class      = $method === 'display' && $view !== '' ? null : self::controllerClass($app, $option, $named ? $controller : 'display');
+
+        // A real task of the controller runs instead of display(), whatever
+        // `view` says (the router fills `view` in from the menu item, so a
+        // form submit or a payment callback often carries one).
+        if ($class !== null && $method !== 'display' && \in_array($method, self::controllerTasks($class), true)) {
+            return null;
+        }
+
+        if ($view !== '') {
+            return $view;
+        }
+
+        if ($class === null) {
+            // Can't read the controller (an older component picks it in its
+            // own entry file): only a display counts as a page view.
+            return $method === 'display' || $method === '' ? '' : null;
+        }
+
+        try {
+            $display  = new \ReflectionMethod($class, 'display');
+            $defaults = (new \ReflectionClass($class))->getDefaultProperties();
+        } catch (\ReflectionException $e) {
+            return '';
+        }
+
+        // A controller with its own display() picks the view itself.
+        if ($display->getDeclaringClass()->getName() !== BaseController::class) {
+            return '';
+        }
+
+        // BaseController: default_view, else the controller's name, which the
+        // dispatcher sets from the request for a named controller.
+        foreach ([(string) ($defaults['default_view'] ?? ''), (string) ($defaults['name'] ?? ''), $named ? $controller : ''] as $candidate) {
+            $candidate = self::normaliseName($candidate);
+
+            if ($candidate !== '') {
+                return $candidate;
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * Memoised controller class lookups, keyed "option:name".
+     *
+     * @var    array<string, string|null>
+     * @since  __DEPLOY_VERSION__
+     */
+    private static array $controllerClasses = [];
+
+    /**
+     * The site controller class ComponentDispatcher would create for this
+     * component and controller name, or null when it can't be told: an older
+     * component without a namespace (its own entry file picks the
+     * controller), or no such class.
+     *
+     * @param   CMSApplicationInterface  $app     The application.
+     * @param   string                   $option  Component, lower case.
+     * @param   string                   $name    Controller name, normalised.
+     *
+     * @return  string|null
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function controllerClass(CMSApplicationInterface $app, string $option, string $name): ?string
+    {
+        $key = $option . ':' . $name;
+
+        if (\array_key_exists($key, self::$controllerClasses)) {
+            return self::$controllerClasses[$key];
+        }
+
+        $class = null;
+
+        try {
+            if ($name !== '' && method_exists($app, 'bootComponent')) {
+                $component = $app->bootComponent($option);
+                $factory   = $component instanceof MVCFactoryServiceInterface ? $component->getMVCFactory() : null;
+
+                if ($factory instanceof MVCFactory) {
+                    $namespace = (new \ReflectionProperty(MVCFactory::class, 'namespace'))->getValue($factory);
+
+                    if (\is_string($namespace) && $namespace !== '') {
+                        $candidate = trim($namespace, '\\') . '\\Site\\Controller\\' . ucfirst($name) . 'Controller';
+
+                        if (class_exists($candidate) && is_subclass_of($candidate, BaseController::class)) {
+                            $class = $candidate;
+                        }
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            $class = null;
+        }
+
+        return self::$controllerClasses[$key] = $class;
+    }
+
+    /**
+     * The tasks a controller answers (lower case), the way BaseController
+     * registers them: its public methods, minus BaseController's own except
+     * display().
+     *
+     * @param   string  $class  Controller class.
+     *
+     * @return  string[]
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function controllerTasks(string $class): array
+    {
+        $base  = get_class_methods(BaseController::class);
+        $tasks = [];
+
+        try {
+            foreach ((new \ReflectionClass($class))->getMethods(\ReflectionMethod::IS_PUBLIC) as $method) {
+                $name = $method->getName();
+
+                if ($name === 'display' || !\in_array($name, $base, true)) {
+                    $tasks[] = self::asciiLower($name);
+                }
+            }
+        } catch (\ReflectionException $e) {
+            return [];
+        }
+
+        return $tasks;
+    }
+
+    /**
+     * The menu item the request was opened under: the router's active item,
+     * else the Itemid in the request.
+     *
+     * @param   CMSApplicationInterface  $app  The application.
+     *
+     * @return  object|null
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function getActiveItem(CMSApplicationInterface $app): ?object
+    {
+        if (!method_exists($app, 'getMenu')) {
+            return null;
+        }
+
+        $menu   = $app->getMenu();
+        $active = $menu->getActive();
+
+        if (!$active) {
+            $itemId = self::getActiveItemId($app);
+            $active = $itemId > 0 ? $menu->getItem($itemId) : null;
+        }
+
+        return $active && (int) $active->id > 0 ? $active : null;
+    }
+
+    /**
+     * Is the request exactly the page of the menu item it was opened under
+     * (same component, view and id as the item's own link)? Only then does
+     * that menu item vouch for the request. Any menu item id can be added to
+     * any URL, and Joomla puts links it can't place under the home item.
+     *
+     * @param   CMSApplicationInterface                      $app      The application.
+     * @param   array{option: string, view: ?string, id: int}  $request  From describeRequest().
      *
      * @return  boolean
      *
      * @since   __DEPLOY_VERSION__
      */
-    private static function matchesProtectedView(CMSApplicationInterface $app, array $views): bool
+    private static function isActiveItemsOwnPage(CMSApplicationInterface $app, array $request): bool
     {
-        $input = $app->getInput();
-        $view  = strtolower($input->getCmd('view', ''));
+        $active = $request['view'] === null ? null : self::getActiveItem($app);
 
-        if ($view === '') {
+        if ($active === null) {
             return false;
         }
 
-        return \in_array(strtolower($input->getCmd('option', '')) . ':' . $view, $views, true);
+        $query = (array) ($active->query ?? []);
+
+        if (self::asciiLower(self::queryString($query, 'option')) !== $request['option']) {
+            return false;
+        }
+
+        $view = self::resolveView(
+            $app,
+            $request['option'],
+            self::queryString($query, 'view'),
+            self::queryString($query, 'task'),
+            self::queryString($query, 'controller')
+        );
+
+        return $view === $request['view'] && self::queryId($query) === $request['id'];
+    }
+
+    /**
+     * A string value from a menu link's query ('' when missing or not a string).
+     *
+     * @param   array<string, mixed>  $query  Menu item query.
+     * @param   string                $key    Key.
+     *
+     * @return  string
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function queryString(array $query, string $key): string
+    {
+        return \is_scalar($query[$key] ?? null) ? (string) $query[$key] : '';
+    }
+
+    /**
+     * The id in a menu link's query. com_tags links carry it as a one-entry
+     * array (id[0]=8); more than one id can't be a single page (-1).
+     *
+     * @param   array<string, mixed>  $query  Menu item query.
+     *
+     * @return  integer
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function queryId(array $query): int
+    {
+        $id = $query['id'] ?? 0;
+
+        if (\is_array($id)) {
+            if (\count($id) !== 1) {
+                return -1;
+            }
+
+            $id = reset($id);
+        }
+
+        return \is_scalar($id) ? (int) $id : -1;
+    }
+
+    /**
+     * Is the request for one of the "Also protect these views" views?
+     *
+     * @param   CMSApplicationInterface                      $app      The application.
+     * @param   array{option: string, view: ?string, id: int}  $request  From describeRequest().
+     * @param   string[]                                       $views    From getProtectedViews().
+     *
+     * @return  boolean
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function matchesProtectedView(CMSApplicationInterface $app, array $request, array $views): bool
+    {
+        if ($request['view'] === null) {
+            return false;
+        }
+
+        if ($request['view'] !== '') {
+            return \in_array($request['option'] . ':' . $request['view'], $views, true);
+        }
+
+        // The component's default view: it can't be named, so it counts as
+        // any listed view of that component unless it's the menu item's own page.
+        foreach ($views as $entry) {
+            if (str_starts_with($entry, $request['option'] . ':')) {
+                return !self::isActiveItemsOwnPage($app, $request);
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -547,9 +1094,9 @@ final class ProtectionHelper
             return $root->toString(['scheme', 'host', 'port']) . $url;
         }
 
-        $scheme = strtolower((string) ($parts['scheme'] ?? ''));
+        $scheme = self::asciiLower((string) ($parts['scheme'] ?? ''));
 
-        if (!\in_array($scheme, ['http', 'https'], true) || strcasecmp($parts['host'], (string) $root->getHost()) !== 0) {
+        if (!\in_array($scheme, ['http', 'https'], true) || self::asciiLower($parts['host']) !== self::asciiLower((string) $root->getHost())) {
             return $fallback;
         }
 
@@ -564,30 +1111,32 @@ final class ProtectionHelper
     }
 
     /**
-     * Memoised com_content targets of page protection.
+     * Memoised content targets of page protection.
      *
-     * @var    array{articles: int[], ranges: array<int, array{0: int, 1: int}>}|null
+     * @var    array{articles: int[], ranges: array<int, array{0: int, 1: int}>, contacts: array<int, array{0: int, 1: int}>}|null
      * @since  0.1.0
      */
     private static ?array $contentTargets = null;
 
     /**
-     * Memoised category id => [lft, rgt].
+     * Memoised "extension:category id" => [lft, rgt].
      *
-     * @var    array<int, array{0: int, 1: int}|null>
+     * @var    array<string, array{0: int, 1: int}|null>
      * @since  0.1.0
      */
     private static array $categoryRanges = [];
 
     /**
-     * Articles and category trees that page protection covers ("selected"
+     * Content that page protection covers outside its own pages ("selected"
      * mode with "also catch other routes" on): articles with their own
-     * protected menu item, and everything inside a protected category.
+     * protected menu item, everything inside a protected com_content
+     * category (ranges), and everything inside a protected com_contact
+     * category (contacts), for lists, tag lists, modules and feeds.
      *
      * @param   CMSApplicationInterface  $app     The application.
      * @param   Registry                 $params  Component params.
      *
-     * @return  array{articles: int[], ranges: array<int, array{0: int, 1: int}>}
+     * @return  array{articles: int[], ranges: array<int, array{0: int, 1: int}>, contacts: array<int, array{0: int, 1: int}>}
      *
      * @since   0.1.0
      */
@@ -597,7 +1146,7 @@ final class ProtectionHelper
             return self::$contentTargets;
         }
 
-        $targets = ['articles' => [], 'ranges' => []];
+        $targets = ['articles' => [], 'ranges' => [], 'contacts' => []];
 
         if (
             (string) $params->get('protection_mode', self::MODE_SELECTED) !== self::MODE_SELECTED
@@ -607,30 +1156,34 @@ final class ProtectionHelper
             return self::$contentTargets = $targets;
         }
 
-        $categories = [];
+        $categories = ['com_content' => [], 'com_contact' => []];
 
-        foreach (self::getMenuItemIds($params) as $menuItemId) {
-            $item = $app->getMenu()->getItem($menuItemId);
+        foreach (self::getProtectedMenuItemIds($params) as $menuItemId) {
+            $item   = $app->getMenu()->getItem($menuItemId);
+            $query  = $item ? (array) ($item->query ?? []) : [];
+            $option = self::asciiLower(self::queryString($query, 'option'));
 
-            if (!$item || (string) ($item->query['option'] ?? '') !== 'com_content') {
+            if (!isset($categories[$option])) {
                 continue;
             }
 
-            $view = (string) ($item->query['view'] ?? '');
-            $id   = (int) ($item->query['id'] ?? 0);
+            $view = self::normaliseName(self::queryString($query, 'view'));
+            $id   = self::queryId($query);
 
-            if ($view === 'article' && $id > 0) {
+            if ($option === 'com_content' && $view === 'article' && $id > 0) {
                 $targets['articles'][] = $id;
             } elseif ($view === 'category' && $id > 0) {
-                $categories[] = $id;
+                $categories[$option][] = $id;
             }
         }
 
-        foreach (array_unique($categories) as $categoryId) {
-            $range = self::getCategoryRange($categoryId);
+        foreach (['com_content' => 'ranges', 'com_contact' => 'contacts'] as $option => $key) {
+            foreach (array_unique($categories[$option]) as $categoryId) {
+                $range = self::getCategoryRange($categoryId, $option);
 
-            if ($range !== null) {
-                $targets['ranges'][$categoryId] = $range;
+                if ($range !== null) {
+                    $targets[$key][$categoryId] = $range;
+                }
             }
         }
 
@@ -640,11 +1193,56 @@ final class ProtectionHelper
     }
 
     /**
+     * Does page protection cover any content outside its own pages?
+     *
+     * @param   array{articles: int[], ranges: array<int, array{0: int, 1: int}>, contacts: array<int, array{0: int, 1: int}>}  $targets  From getContentTargets().
+     *
+     * @return  boolean
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    public static function hasContentTargets(array $targets): bool
+    {
+        return $targets['articles'] !== [] || $targets['ranges'] !== [] || ($targets['contacts'] ?? []) !== [];
+    }
+
+    /**
+     * Is a contact in this com_contact category covered by page protection?
+     *
+     * @param   int    $categoryId  The contact's category id.
+     * @param   array{articles: int[], ranges: array<int, array{0: int, 1: int}>, contacts: array<int, array{0: int, 1: int}>}  $targets  From getContentTargets().
+     *
+     * @return  boolean
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    public static function isProtectedContact(int $categoryId, array $targets): bool
+    {
+        if (($targets['contacts'] ?? []) === [] || $categoryId <= 0) {
+            return false;
+        }
+
+        $range = self::getCategoryRange($categoryId, 'com_contact');
+
+        if ($range === null) {
+            return false;
+        }
+
+        foreach ($targets['contacts'] as [$lft, $rgt]) {
+            if ($lft <= $range[0] && $rgt >= $range[1]) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Is this com_content article covered by page protection?
      *
      * @param   int  $articleId   Article id.
      * @param   int  $categoryId  The article's category id.
-     * @param   array{articles: int[], ranges: array<int, array{0: int, 1: int}>}  $targets  From getContentTargets().
+     * @param   array{articles: int[], ranges: array<int, array{0: int, 1: int}>, contacts: array<int, array{0: int, 1: int}>}  $targets  From getContentTargets().
      *
      * @return  boolean
      *
@@ -682,7 +1280,7 @@ final class ProtectionHelper
      *
      * @param   string  $view        Request view.
      * @param   int     $categoryId  Request id (category feeds).
-     * @param   array{articles: int[], ranges: array<int, array{0: int, 1: int}>}  $targets  From getContentTargets().
+     * @param   array{articles: int[], ranges: array<int, array{0: int, 1: int}>, contacts: array<int, array{0: int, 1: int}>}  $targets  From getContentTargets().
      *
      * @return  boolean
      *
@@ -777,18 +1375,21 @@ final class ProtectionHelper
     }
 
     /**
-     * [lft, rgt] of a com_content category, memoised.
+     * [lft, rgt] of a category, memoised.
      *
-     * @param   int  $categoryId  Category id.
+     * @param   int     $categoryId  Category id.
+     * @param   string  $extension   The category's component.
      *
      * @return  array{0: int, 1: int}|null
      *
      * @since   0.1.0
      */
-    private static function getCategoryRange(int $categoryId): ?array
+    private static function getCategoryRange(int $categoryId, string $extension = 'com_content'): ?array
     {
-        if (\array_key_exists($categoryId, self::$categoryRanges)) {
-            return self::$categoryRanges[$categoryId];
+        $key = $extension . ':' . $categoryId;
+
+        if (\array_key_exists($key, self::$categoryRanges)) {
+            return self::$categoryRanges[$key];
         }
 
         try {
@@ -797,14 +1398,15 @@ final class ProtectionHelper
                 ->select([$db->quoteName('lft'), $db->quoteName('rgt')])
                 ->from($db->quoteName('#__categories'))
                 ->where($db->quoteName('id') . ' = :id')
-                ->where($db->quoteName('extension') . ' = ' . $db->quote('com_content'))
-                ->bind(':id', $categoryId, ParameterType::INTEGER);
+                ->where($db->quoteName('extension') . ' = :extension')
+                ->bind(':id', $categoryId, ParameterType::INTEGER)
+                ->bind(':extension', $extension);
 
             $row = $db->setQuery($query)->loadObject();
 
-            return self::$categoryRanges[$categoryId] = $row ? [(int) $row->lft, (int) $row->rgt] : null;
+            return self::$categoryRanges[$key] = $row ? [(int) $row->lft, (int) $row->rgt] : null;
         } catch (\Throwable $e) {
-            return self::$categoryRanges[$categoryId] = null;
+            return self::$categoryRanges[$key] = null;
         }
     }
 
@@ -812,62 +1414,59 @@ final class ProtectionHelper
      * "Every page except…" mode: is this request one of the excluded pages?
      * True only when the request's option / view / id / layout match an
      * excluded menu item's own link, or (com_content) the request is an
-     * article or subcategory inside an excluded category.
+     * article or subcategory inside an excluded category. The view is the one
+     * Joomla will show (resolveView()), so `task=article.display` is matched
+     * like `view=article`.
      *
      * @param   CMSApplicationInterface  $app       The application.
      * @param   int[]                    $excluded  Excluded menu item ids.
+     * @param   string                   $option    Request component, lower case.
      *
      * @return  boolean
      *
      * @since   0.1.0
      */
-    private static function isExcludedRequest(CMSApplicationInterface $app, array $excluded): bool
+    private static function isExcludedRequest(CMSApplicationInterface $app, array $excluded, string $option): bool
     {
+        $excluded = self::itemsOfComponent($app, $excluded, $option);
+
         if ($excluded === []) {
             return false;
         }
 
         $input   = $app->getInput();
+        $details = self::describeRequest($app, $option);
         $request = [
-            'option' => $input->getCmd('option', ''),
-            'view'   => $input->getCmd('view', ''),
-            'id'     => (string) $input->getInt('id', 0),
-            'layout' => $input->getCmd('layout', ''),
+            'view'   => $details['view'] ?? '',
+            'id'     => $details['id'],
+            'layout' => (string) self::singleValue($input, 'layout'),
         ];
         $menu       = $app->getMenu();
         $categories = [];
 
         foreach ($excluded as $menuItemId) {
-            $item = $menu->getItem($menuItemId);
+            $item  = $menu->getItem($menuItemId);
+            $query = $item ? (array) ($item->query ?? []) : [];
 
-            if (!$item || (string) ($item->query['option'] ?? '') !== $request['option']) {
+            if (!$item || self::asciiLower(self::queryString($query, 'option')) !== $option) {
                 continue;
             }
 
-            $matches = true;
+            $itemView   = self::normaliseName(self::queryString($query, 'view'));
+            $itemId     = self::queryId($query);
+            $itemLayout = self::queryString($query, 'layout');
 
-            foreach (['view', 'id', 'layout'] as $key) {
-                $expected = $key === 'id' ? (string) (int) ($item->query[$key] ?? 0) : (string) ($item->query[$key] ?? '');
-
-                if ($expected !== $request[$key] && !($key === 'layout' && $expected === '')) {
-                    $matches = false;
-                    break;
-                }
-            }
-
-            if ($matches) {
+            if ($itemView === $request['view'] && $itemId === $request['id'] && ($itemLayout === '' || $itemLayout === $request['layout'])) {
                 return true;
             }
 
-            if ($request['option'] === 'com_content' && (string) ($item->query['view'] ?? '') === 'category' && (int) ($item->query['id'] ?? 0) > 0) {
-                $categories[] = (int) $item->query['id'];
+            if ($option === 'com_content' && $itemView === 'category' && $itemId > 0) {
+                $categories[] = $itemId;
             }
         }
 
-        $id = (int) $request['id'];
-
-        if ($categories !== [] && $id > 0 && \in_array($request['view'], ['article', 'category'], true)) {
-            return self::isInsideCategories('com_content', $request['view'], $id, $categories);
+        if ($categories !== [] && $request['id'] > 0 && \in_array($request['view'], ['article', 'category'], true)) {
+            return self::isInsideCategories('com_content', $request['view'], $request['id'], $categories);
         }
 
         return false;
@@ -875,45 +1474,58 @@ final class ProtectionHelper
 
     /**
      * Catch requests for protected content reached through a different (or
-     * forged) Itemid, or none:
+     * forged) Itemid, or none. The view is the one Joomla will show
+     * (resolveView()), so `task=contact.display` or `controller=contact` is
+     * matched like `view=contact`; a request that runs another task (form
+     * submit, payment callback, AJAX) never matches.
      *
-     * - same component + view + id as a protected menu item;
+     * - same component + view + id as a protected menu item; a protected item
+     *   whose link has no id (a list) covers its view whatever the id;
      * - an article / contact / news feed (or a subcategory) inside a protected
-     *   category of com_content, com_contact or com_newsfeeds;
+     *   category of com_content, com_contact or com_newsfeeds, and the
+     *   featured-contacts and contact category lists when they'd show a
+     *   contact from a protected category;
      * - any other component: the detail view of a protected list (a protected
-     *   "members" list covers "member") when the request isn't on one of that
-     *   component's own menu items (issue #16).
+     *   "members" list covers "member"), unless the request is exactly the
+     *   page of the menu item it was opened under (issue #16);
+     * - the component's default view (no view named): any component with a
+     *   protected menu item, unless it is exactly that menu item's page.
      *
-     * @param   CMSApplicationInterface  $app         The application.
-     * @param   int[]                    $configured  Protected menu item ids.
+     * @param   CMSApplicationInterface                        $app         The application.
+     * @param   int[]                                          $configured  Protected menu item ids.
+     * @param   array{option: string, view: ?string, id: int}  $request     From describeRequest().
      *
      * @return  boolean
      *
      * @since   0.1.0
      */
-    private static function matchesProtectedContent(CMSApplicationInterface $app, array $configured): bool
+    private static function matchesProtectedContent(CMSApplicationInterface $app, array $configured, array $request): bool
     {
-        $input  = $app->getInput();
-        $option = strtolower($input->getCmd('option', ''));
-        $view   = strtolower($input->getCmd('view', ''));
-        $id     = $input->getInt('id', 0);
-        $menu   = $app->getMenu();
+        ['option' => $option, 'view' => $view, 'id' => $id] = $request;
 
+        if ($view === null) {
+            return false;
+        }
+
+        $menu                = $app->getMenu();
         $categoryComponent   = self::CATEGORY_COMPONENTS[$option] ?? null;
         $protectedCategories = [];
         $detailViews         = [];
+        $sameComponent       = false;
 
         foreach ($configured as $menuItemId) {
-            $item = $menu->getItem($menuItemId);
+            $item  = $menu->getItem($menuItemId);
+            $query = $item ? (array) ($item->query ?? []) : [];
 
-            if (!$item || strtolower((string) ($item->query['option'] ?? '')) !== $option) {
+            if (!$item || self::asciiLower(self::queryString($query, 'option')) !== $option) {
                 continue;
             }
 
-            $itemView = strtolower((string) ($item->query['view'] ?? ''));
-            $itemId   = (int) ($item->query['id'] ?? 0);
+            $sameComponent = true;
+            $itemView      = self::normaliseName(self::queryString($query, 'view'));
+            $itemId        = self::queryId($query);
 
-            if ($itemView === $view && $itemId === $id) {
+            if ($view !== '' && $itemView === $view && ($itemId === $id || $itemId === 0)) {
                 return true;
             }
 
@@ -926,25 +1538,120 @@ final class ProtectionHelper
             }
         }
 
-        if ($categoryComponent !== null) {
-            if ($protectedCategories === [] || $id <= 0 || !\in_array($view, [$categoryComponent['view'], 'category'], true)) {
-                return false;
-            }
-
-            return self::isInsideCategories($option, $view, $id, $protectedCategories);
-        }
-
-        if ($view === '' || !\in_array($view, $detailViews, true)) {
+        if (!$sameComponent) {
             return false;
         }
 
-        return self::isOffMenuRequest($app, $option);
+        if ($view === '') {
+            return !self::isActiveItemsOwnPage($app, $request);
+        }
+
+        if ($categoryComponent !== null) {
+            if ($protectedCategories === []) {
+                return false;
+            }
+
+            if ($id > 0 && \in_array($view, [$categoryComponent['view'], 'category'], true) && self::isInsideCategories($option, $view, $id, $protectedCategories)) {
+                return true;
+            }
+
+            if ($option === 'com_contact' && \in_array($view, ['featured', 'category'], true)) {
+                return self::contactListIncludesProtected($app, $view, $id, $protectedCategories);
+            }
+
+            return false;
+        }
+
+        if (!\in_array($view, $detailViews, true)) {
+            return false;
+        }
+
+        return !self::isActiveItemsOwnPage($app, $request);
+    }
+
+    /**
+     * Would this contact list show a contact from a protected category? The
+     * featured-contacts list shows featured contacts from every category; a
+     * contact category list also shows the contacts of its subcategories, as
+     * deep as its "Subcategory Levels" setting (maxLevel). Fails closed.
+     *
+     * @param   CMSApplicationInterface  $app                  The application.
+     * @param   string                   $view                 'featured' or 'category'.
+     * @param   int                      $categoryId           Request id (category lists).
+     * @param   int[]                    $protectedCategories  Protected com_contact category ids.
+     *
+     * @return  boolean
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function contactListIncludesProtected(CMSApplicationInterface $app, string $view, int $categoryId, array $protectedCategories): bool
+    {
+        try {
+            $scope = [];
+            $db    = Factory::getContainer()->get(DatabaseInterface::class);
+
+            foreach (array_unique($protectedCategories) as $protectedId) {
+                $range = self::getCategoryRange($protectedId, 'com_contact');
+
+                if ($range !== null) {
+                    $scope[] = '(' . $db->quoteName('c.lft') . ' >= ' . (int) $range[0] . ' AND ' . $db->quoteName('c.rgt') . ' <= ' . (int) $range[1] . ')';
+                }
+            }
+
+            if ($scope === []) {
+                return false;
+            }
+
+            $query = $db->createQuery()
+                ->select('COUNT(*)')
+                ->from($db->quoteName('#__contact_details', 'a'))
+                ->join('INNER', $db->quoteName('#__categories', 'c'), $db->quoteName('c.id') . ' = ' . $db->quoteName('a.catid'))
+                ->where($db->quoteName('a.published') . ' = 1')
+                ->where('(' . implode(' OR ', $scope) . ')');
+
+            if ($view === 'featured') {
+                $query->where($db->quoteName('a.featured') . ' = 1');
+            } else {
+                $levels = method_exists($app, 'getParams') ? (int) $app->getParams('com_contact')->get('maxLevel', 1) : -1;
+
+                if ($levels === 0 || $categoryId <= 0) {
+                    return false;
+                }
+
+                $parent = $db->setQuery(
+                    $db->createQuery()
+                        ->select([$db->quoteName('lft'), $db->quoteName('rgt'), $db->quoteName('level')])
+                        ->from($db->quoteName('#__categories'))
+                        ->where($db->quoteName('id') . ' = :id')
+                        ->where($db->quoteName('extension') . ' = ' . $db->quote('com_contact'))
+                        ->bind(':id', $categoryId, ParameterType::INTEGER)
+                )->loadObject();
+
+                if (!$parent) {
+                    return false;
+                }
+
+                $query->where($db->quoteName('c.lft') . ' > ' . (int) $parent->lft)
+                    ->where($db->quoteName('c.rgt') . ' < ' . (int) $parent->rgt);
+
+                if ($levels > 0) {
+                    $query->where($db->quoteName('c.level') . ' <= ' . ((int) $parent->level + $levels));
+                }
+            }
+
+            return (int) $db->setQuery($query)->loadResult() > 0;
+        } catch (\Throwable $e) {
+            // Can't tell: treat the list as showing a protected contact.
+            return true;
+        }
     }
 
     /**
      * Likely names of the detail view that belongs to a list view: the
      * singular ("members" -> "member", "entries" -> "entry", "boxes" -> "box").
-     * Extra guesses that aren't a real view never match a request.
+     * Extra guesses that aren't a real view never match a request. Only
+     * regular plurals are covered: K2 (itemlist -> item), Community Builder
+     * (userslist -> userprofile) and the like need "Also protect these views".
      *
      * @param   string  $listView  The protected menu item's view, lower case.
      *
@@ -969,37 +1676,6 @@ final class ProtectionHelper
         }
 
         return $views;
-    }
-
-    /**
-     * Is the request outside the component's own menu items? True with no
-     * menu item, the home item (where Joomla puts links it can't place), a
-     * menu item of another component, or an unknown Itemid. A menu item of the
-     * same component is trusted: it's either the protected item (checked
-     * first) or one of the component's public pages.
-     *
-     * @param   CMSApplicationInterface  $app     The application.
-     * @param   string                   $option  Request component, lower case.
-     *
-     * @return  boolean
-     *
-     * @since   __DEPLOY_VERSION__
-     */
-    private static function isOffMenuRequest(CMSApplicationInterface $app, string $option): bool
-    {
-        $menu   = $app->getMenu();
-        $active = $menu->getActive();
-
-        if (!$active) {
-            $itemId = $app->getInput()->getInt('Itemid', 0);
-            $active = $itemId > 0 ? $menu->getItem($itemId) : null;
-        }
-
-        if (!$active || (int) $active->id <= 0 || (int) ($active->home ?? 0) === 1) {
-            return true;
-        }
-
-        return strtolower((string) ($active->query['option'] ?? '')) !== $option;
     }
 
     /**

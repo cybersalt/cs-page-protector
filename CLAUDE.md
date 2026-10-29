@@ -41,17 +41,23 @@ packages/
 
 ### Other routes to protected pages ("selected" mode, issue #16)
 
-`computeProtected()` order: protected Itemid -> "Also protect these views" (`protect_views`, `component:view` lines, any Itemid, independent of `match_content`) -> `matchesProtectedContent()` when `match_content` is on:
+`computeProtected()` order: nothing protected -> false; any array in `SINGLE_VALUE_KEYS` (option/view/id/Itemid/task/controller/layout/format) -> protected; protected Itemid (`getProtectedMenuItemIds()` = picked items **plus their `com_menus.item` language associations**) -> only if the request's component has a protected item or `protect_views` entry: "Also protect these views" (`protect_views`, `component:view` lines, any Itemid, independent of `match_content`) -> `matchesProtectedContent()` when `match_content` is on:
 
-- exact option/view/id of a protected item (case-insensitive);
-- com_content, com_contact, com_newsfeeds (`CATEGORY_COMPONENTS`): item or subcategory inside a protected category, any Itemid (nested set);
-- any other component: the singular of a protected list view (`detailViewsOf()`: members -> member, entries -> entry) when the request is **off the component's own menu** (`isOffMenuRequest()`: no item, the home item, another component's item, unknown Itemid). A same-component Itemid is trusted, so a forged public same-component Itemid needs the explicit `protect_views` entry.
+- same option/view as a protected item and the same id, or **any id when the item's link has none** (lists);
+- com_content, com_contact, com_newsfeeds (`CATEGORY_COMPONENTS`): item or subcategory inside a protected category, any Itemid (nested set); com_contact `featured` and `category` lists that would show a contact from a protected category (`contactListIncludesProtected()`, honours `maxLevel`, fails closed);
+- any other component: the singular of a protected list view (`detailViewsOf()`: members -> member, entries -> entry; regular plurals only, K2/CB need `protect_views`) unless the request is **exactly the page of its active menu item** (`isActiveItemsOwnPage()`: same option + resolved view + id as the item's link). Any other Itemid (home, forged, another component's, a public item of the same component, a language copy) vouches for nothing.
 
-Requests without a `view` (payment callbacks, `task=` AJAX) are never matched by these rules. `all_except` mode is unchanged (still com_content-only category exclusion).
+**The view is `resolveView()`, not the raw `view`** (security review of #16, H1). It mirrors `ComponentDispatcher::dispatch()` + `BaseController::execute()/display()`: `task=ctrl.method` or `controller=` + `task=method`; a real task of the controller (public method, not BaseController's own, not display) -> `null` = not a page view, never matched (form submits, payment callbacks, AJAX), even when the router filled `view` in; otherwise `view`, else the controller's `default_view`/name; a controller that overrides `display()`, the component default view, or an older non-namespaced component -> `''` = unknown, which matches **any** protected item/entry of that component unless it's the active item's own page (fail closed). Controller classes are found by reflection on the component's `MVCFactory` namespace (`bootComponent()`), never instantiated. Names are normalised like Joomla (`normaliseName()`: ASCII lower case, `[a-z0-9_]` only, so `con.tact` = `contact`); never use `strtolower()` here (locale on PHP 8.1), use `asciiLower()`.
+
+Router gotcha found while testing: with no Itemid, `SiteRouter::parseRawRoute()` merges the **home** item's query into the URI when the URL's `option` matches home or is missing (a POST body `option` is missing from the URI), so a "view-less" request often arrives with `view=featured`. That's the page Joomla shows, so matching the input after routing is right.
+
+`protect_views` refuses (`ProtectviewsRule`, message per reason; `parseViewList()` returns `valid` / `invalid` / `reserved` / `unchecked`, and only `valid` is ever used at runtime, so entries saved around validation do nothing): `com_users`, `com_config`, `com_privacy`, payment/callback-looking view names (`RESERVED_VIEW_PATTERN`), and `com_ajax` / `com_cspageprotector` (never checked). `all_except` mode: exclusions match on the resolved view too, still com_content-only category exclusion, `protect_views` ignored.
+
+Known, not changed (Tim to decide): L3 (array `id` = protected) still challenges com_tags tag menu items, whose links carry `id[0]=N`, on GET with strict routing; it now only applies when something is page-protected.
 
 ### Content gate (other routes to protected articles)
 
-With "also catch other routes" on, `guardSharedContent()` 403s non-HTML com_content requests (feeds) that would include a protected article, and `onContentPrepare` replaces a protected article's text with `PLG_SYSTEM_CSPAGEPROTECTOR_CONTENT_LOCKED` in `com_content.*`, `com_tags.*` and `mod_articles*` contexts. It fails closed. Smart Search snippets aren't covered (stored at index time).
+With "also catch other routes" on, `guardSharedContent()` 403s non-HTML com_content requests (feeds) that would include a protected article, and `onContentPrepare` replaces a protected article's text with `PLG_SYSTEM_CSPAGEPROTECTOR_CONTENT_LOCKED` in `com_content.*`, `com_tags.*` and `mod_articles*` contexts. In `com_tags.*` rows of type `com_contact.contact` inside a protected contact category (`getContentTargets()['contacts']`) get the same notice and lose `core_images`. It fails closed. Smart Search snippets aren't covered (stored at index time).
 
 ## Gotchas found while building
 

@@ -57,7 +57,7 @@ final class CaptchaHelper
      */
     public static function getConfiguredPlugin(Registry $params): string
     {
-        $plugin = preg_replace('/[^a-z0-9_]/', '', strtolower((string) $params->get('captcha_plugin', self::DEFAULT_PLUGIN)));
+        $plugin = preg_replace('/[^a-z0-9_]/', '', ProtectionHelper::asciiLower((string) $params->get('captcha_plugin', self::DEFAULT_PLUGIN)));
 
         return $plugin !== '' ? $plugin : self::DEFAULT_PLUGIN;
     }

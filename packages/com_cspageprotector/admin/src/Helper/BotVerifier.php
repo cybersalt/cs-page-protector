@@ -204,7 +204,7 @@ final class BotVerifier
             return false;
         }
 
-        $host = strtolower(rtrim($host, '.'));
+        $host = ProtectionHelper::asciiLower(rtrim($host, '.'));
 
         $domainOk = false;
 

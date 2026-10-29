@@ -447,7 +447,7 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
     {
         $hasModules = ProtectionHelper::hasModuleProtection($params);
         $targets    = ProtectionHelper::getContentTargets($app, $params);
-        $hasContent = $targets['articles'] !== [] || $targets['ranges'] !== [];
+        $hasContent = ProtectionHelper::hasContentTargets($targets);
 
         if (!$hasModules && !$hasContent) {
             return;
@@ -456,21 +456,30 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
         $app->set('caching', 0);
 
         $input  = $app->getInput();
-        $option = $input->getCmd('option', '');
+        $option = ProtectionHelper::asciiLower((string) ProtectionHelper::singleValue($input, 'option'));
+        $module = (string) ProtectionHelper::singleValue($input, 'module');
 
-        if ($hasModules && $option === 'com_ajax' && $input->getCmd('module', '') !== '') {
-            $type = 'mod_' . preg_replace('/^mod_/', '', $input->getCmd('module', ''));
+        if ($hasModules && $option === 'com_ajax' && $module !== '') {
+            $type = 'mod_' . preg_replace('/^mod_/', '', ProtectionHelper::asciiLower($module));
 
             if (\in_array($type, ProtectionHelper::getProtectedModuleTypes($params), true) && !ProtectionHelper::visitorHasAccess($app, $params)) {
                 $this->sendBlocked($app);
             }
         }
 
+        // An array format/view/id can't be told apart, so it counts as a feed
+        // of everything protected (feedIncludesProtected() with no view).
+        $format = ProtectionHelper::singleValue($input, 'format', 'word', 'html');
+
         if (
-            $hasContent
+            ($targets['articles'] !== [] || $targets['ranges'] !== [])
             && $option === 'com_content'
-            && strtolower($input->getWord('format', 'html')) !== 'html'
-            && ProtectionHelper::feedIncludesProtected($input->getCmd('view', ''), $input->getInt('id', 0), $targets)
+            && ($format === null || ProtectionHelper::asciiLower($format) !== 'html')
+            && ProtectionHelper::feedIncludesProtected(
+                (string) ProtectionHelper::singleValue($input, 'view'),
+                (int) (ProtectionHelper::singleValue($input, 'id', 'int', '0') ?? 0),
+                $targets
+            )
             && !ProtectionHelper::visitorHasAccess($app, $params)
         ) {
             $this->sendBlocked($app);
@@ -507,19 +516,24 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
             $params  = ProtectionHelper::getParams();
             $targets = ProtectionHelper::getContentTargets($app, $params);
 
-            if ($targets['articles'] === [] && $targets['ranges'] === []) {
+            if (!ProtectionHelper::hasContentTargets($targets)) {
                 return;
             }
 
-            // com_tags rows describe the tagged item; only articles matter here.
-            if (isset($article->type_alias) && $article->type_alias !== 'com_content.article') {
-                return;
-            }
-
-            $articleId  = (int) ($article->content_item_id ?? $article->id ?? 0);
+            // com_tags rows describe the tagged item: articles and contacts
+            // matter here (a contact's row carries its address and photo).
+            $type       = isset($article->type_alias) ? (string) $article->type_alias : 'com_content.article';
             $categoryId = (int) ($article->core_catid ?? $article->catid ?? 0);
 
-            if (!ProtectionHelper::isProtectedArticle($articleId, $categoryId, $targets) || ProtectionHelper::visitorHasAccess($app, $params)) {
+            if ($type === 'com_contact.contact') {
+                $protected = ProtectionHelper::isProtectedContact($categoryId, $targets);
+            } elseif ($type === 'com_content.article') {
+                $protected = ProtectionHelper::isProtectedArticle((int) ($article->content_item_id ?? $article->id ?? 0), $categoryId, $targets);
+            } else {
+                return;
+            }
+
+            if (!$protected || ProtectionHelper::visitorHasAccess($app, $params)) {
                 return;
             }
 
@@ -531,6 +545,10 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
                 if (property_exists($article, $field) || $field === 'text') {
                     $article->$field = $field === 'fulltext' ? '' : $notice;
                 }
+            }
+
+            if ($type === 'com_contact.contact' && property_exists($article, 'core_images')) {
+                $article->core_images = '{}';
             }
         } catch (\Throwable $e) {
             // Fail closed: never print protected text after an error.
@@ -632,7 +650,8 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
 
         // Feeds, JSON, raw and other non-HTML formats can't show a challenge,
         // and are an easy way to pull a protected category's content.
-        $format = strtolower($input->getWord('format', 'html'));
+        $format = ProtectionHelper::singleValue($input, 'format', 'word', 'html');
+        $format = $format === null ? 'array' : ProtectionHelper::asciiLower($format);
 
         if ($format !== 'html') {
             LogHelper::log($params, LogHelper::EVENT_BLOCKED, $ip, $userAgent, $url, $itemId, $captcha, 'format=' . $format);
@@ -652,6 +671,9 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
         $input->set('task', 'display');
         $input->set('format', 'html');
         $input->set('id', null);
+        // controller=contact would make the dispatcher look for a
+        // ContactController in this component (unset: no `controller` at all).
+        $input->set('controller', null);
     }
 
     /**

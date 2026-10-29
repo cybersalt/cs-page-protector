@@ -65,12 +65,6 @@ return new class () implements InstallerScriptInterface {
             return true;
         }
 
-        // The package .sys.ini was copied after the Language object was built
-        // (Joomla-Brain gotcha #24) - load it so the card isn't raw constants.
-        $lang = Factory::getApplication()->getLanguage();
-        $lang->load('pkg_cspageprotector.sys', JPATH_ADMINISTRATOR, null, true);
-        $lang->load('com_cspageprotector', JPATH_ADMINISTRATOR, null, true);
-
         $db = Factory::getContainer()->get(DatabaseInterface::class);
 
         if ($type !== 'update') {
@@ -90,7 +84,37 @@ return new class () implements InstallerScriptInterface {
             $noticeAccepted = (string) $params->get('notice_accepted_at', '') !== '';
         });
 
-        $this->renderInstallCard($type, $captchaProblem, $noticeAccepted);
+        // The card is HTML for the installer page in the administrator. A CLI
+        // install (`php cli/joomla.php extension:install`), the Web Services
+        // API or any other client gets Joomla's own message instead: the
+        // card's links, session token and Uri::root() don't work there (in
+        // CLI, Uri throws on a live_site without a path, which used to abort
+        // the whole install). The card is never worth failing an install for.
+        if (!$this->isAdministratorPage()) {
+            return true;
+        }
+
+        $level = ob_get_level();
+
+        try {
+            // The package .sys.ini was copied after the Language object was built
+            // (Joomla-Brain gotcha #24) - load it so the card isn't raw constants.
+            $lang = Factory::getApplication()->getLanguage();
+            $lang->load('pkg_cspageprotector.sys', JPATH_ADMINISTRATOR, null, true);
+            $lang->load('com_cspageprotector', JPATH_ADMINISTRATOR, null, true);
+
+            ob_start();
+            $this->renderInstallCard($type, $captchaProblem, $noticeAccepted);
+            $card = (string) ob_get_clean();
+        } catch (\Throwable $e) {
+            while (ob_get_level() > $level) {
+                ob_end_clean();
+            }
+
+            return true;
+        }
+
+        echo $card;
 
         // Joomla shows the manifest description in its own box above the card,
         // and the card already leads with it. It sets that message before the
@@ -99,6 +123,21 @@ return new class () implements InstallerScriptInterface {
         $adapter->getParent()->message = '';
 
         return true;
+    }
+
+    /**
+     * Is this install running in the administrator's web pages (where the
+     * card can be shown)?
+     */
+    private function isAdministratorPage(): bool
+    {
+        try {
+            $app = Factory::getApplication();
+
+            return \PHP_SAPI !== 'cli' && $app->isClient('administrator');
+        } catch (\Throwable $e) {
+            return false;
+        }
     }
 
     /**

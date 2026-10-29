@@ -39,6 +39,16 @@ packages/
 
 "Every page except" mode (`all_except`) leaves open only what was excluded: `ProtectionHelper::isExcludedRequest()` matches option/view/id/layout exactly, or an article/category inside an excluded com_content category. Never trust the `Itemid` alone.
 
+### Other routes to protected pages ("selected" mode, issue #16)
+
+`computeProtected()` order: protected Itemid -> "Also protect these views" (`protect_views`, `component:view` lines, any Itemid, independent of `match_content`) -> `matchesProtectedContent()` when `match_content` is on:
+
+- exact option/view/id of a protected item (case-insensitive);
+- com_content, com_contact, com_newsfeeds (`CATEGORY_COMPONENTS`): item or subcategory inside a protected category, any Itemid (nested set);
+- any other component: the singular of a protected list view (`detailViewsOf()`: members -> member, entries -> entry) when the request is **off the component's own menu** (`isOffMenuRequest()`: no item, the home item, another component's item, unknown Itemid). A same-component Itemid is trusted, so a forged public same-component Itemid needs the explicit `protect_views` entry.
+
+Requests without a `view` (payment callbacks, `task=` AJAX) are never matched by these rules. `all_except` mode is unchanged (still com_content-only category exclusion).
+
 ### Content gate (other routes to protected articles)
 
 With "also catch other routes" on, `guardSharedContent()` 403s non-HTML com_content requests (feeds) that would include a protected article, and `onContentPrepare` replaces a protected article's text with `PLG_SYSTEM_CSPAGEPROTECTOR_CONTENT_LOCKED` in `com_content.*`, `com_tags.*` and `mod_articles*` contexts. It fails closed. Smart Search snippets aren't covered (stored at index time).
@@ -107,7 +117,7 @@ Credits map for the open issues (keep this updated as issues are filed):
 | #5 Warn when no captcha is available | Bjørn (question; shipped and credited in 0.2.0, closed) |
 | #9 Turnstile and other captchas | Tim for now; Bjørn and Julie also asked for it on stream (WMW #355). Ask Tim before crediting |
 | #13 Send failed visitors to an info page | Bjørn |
-| #2, #6, #7, #8, #10, #11, #12, #14, #15 | Tim (no credit line needed) |
+| #2, #6, #7, #8, #10, #11, #12, #14, #15, #16 | Tim (no credit line needed) |
 
 ## Module protection (#3, Bjørn)
 

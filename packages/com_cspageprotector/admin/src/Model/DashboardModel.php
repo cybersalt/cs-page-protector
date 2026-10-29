@@ -85,15 +85,23 @@ final class DashboardModel extends BaseDatabaseModel
 
         // 3. What's protected.
         $count = \count(ProtectionHelper::getMenuItemIds($params));
+        $views = ProtectionHelper::getProtectedViews($params);
+
+        if ($views !== []) {
+            $checks[] = $this->check('success', Text::sprintf('COM_CSPAGEPROTECTOR_CHECK_VIEWS', implode(', ', $views)), $this->optionsUrl('protection'), Text::_('COM_CSPAGEPROTECTOR_CHECK_CHOOSE_PAGES'));
+        }
 
         if ((string) $params->get('protection_mode', 'selected') === ProtectionHelper::MODE_ALL_EXCEPT) {
             $checks[] = $this->check('info', Text::plural('COM_CSPAGEPROTECTOR_CHECK_MODE_ALL_EXCEPT_N', $count), $this->optionsUrl('protection'), Text::_('COM_CSPAGEPROTECTOR_CHECK_CHOOSE_PAGES'));
         } elseif ($count === 0) {
             // Only a warning when nothing at all is protected; protecting just
-            // modules is a deliberate setup, so then it is only a note.
-            $checks[] = ProtectionHelper::hasModuleProtection($params)
-                ? $this->check('info', Text::_('COM_CSPAGEPROTECTOR_CHECK_NO_PAGES_MODULES_ONLY'), $this->optionsUrl('protection'), Text::_('COM_CSPAGEPROTECTOR_CHECK_CHOOSE_PAGES'))
-                : $this->check('warning', Text::_('COM_CSPAGEPROTECTOR_CHECK_NO_PAGES'), $this->optionsUrl('protection'), Text::_('COM_CSPAGEPROTECTOR_CHECK_CHOOSE_PAGES'));
+            // modules (or just views, listed above) is a deliberate setup, so
+            // then it is only a note.
+            if ($views === []) {
+                $checks[] = ProtectionHelper::hasModuleProtection($params)
+                    ? $this->check('info', Text::_('COM_CSPAGEPROTECTOR_CHECK_NO_PAGES_MODULES_ONLY'), $this->optionsUrl('protection'), Text::_('COM_CSPAGEPROTECTOR_CHECK_CHOOSE_PAGES'))
+                    : $this->check('warning', Text::_('COM_CSPAGEPROTECTOR_CHECK_NO_PAGES'), $this->optionsUrl('protection'), Text::_('COM_CSPAGEPROTECTOR_CHECK_CHOOSE_PAGES'));
+            }
         } else {
             $checks[] = $this->check('success', Text::plural('COM_CSPAGEPROTECTOR_CHECK_PAGES_N', $count), $this->optionsUrl('protection'), Text::_('COM_CSPAGEPROTECTOR_CHECK_CHOOSE_PAGES'));
         }

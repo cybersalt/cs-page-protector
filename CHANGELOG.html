@@ -2,6 +2,21 @@
     <h1>📋 Cybersalt Page Protector - Changelog</h1>
 
     <h2>
+        <span class="version-badge">Unreleased</span>
+    </h2>
+
+    <h3><span class="section-icon">🔍</span>Security</h3>
+    <ul>
+        <li><strong>Detail pages of protected lists</strong>: they could be opened without the check when the link had no menu item, the home menu item or another component's menu item. Example: with a member directory list (<code>view=members</code>) protected, a profile page (<code>view=member&amp;id=17</code>) opened through a plain <code>index.php</code> link showed the full profile, and profile ids are easy to walk. "Also catch other routes to the same content" now covers these pages. For contacts and news feeds it works like articles already did: everything inside a protected category is protected, whatever menu item the link uses. For other components, the detail view of a protected list (<code>members</code> &rarr; <code>member</code>) is protected when it's opened without one of that component's own menu items. Other views of the same component, such as sign-up and payment pages, stay open (#16).</li>
+        <li><strong>Case</strong>: component and view names are now compared without regard to case, so <code>view=CONTACT</code> can't step around a protected <code>view=contact</code> on servers where it still opens the same page.</li>
+    </ul>
+
+    <h3><span class="section-icon">🚀</span>New</h3>
+    <ul>
+        <li><strong>Also protect these views</strong> on the Protection tab: list <code>component:view</code> pairs, one per line (for example <code>com_osmembership:member</code>), and every page of that view is protected, whatever menu item the link uses or none. Use it when a component's detail pages can also be opened under one of its own public menu items. Entries that aren't <code>component:view</code> are refused when Options are saved, and the dashboard lists the protected views (#16).</li>
+    </ul>
+
+    <h2>
         <span class="version-badge">v0.2.1</span>
         <span class="date">2026-10-20</span>
     </h2>

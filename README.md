@@ -12,7 +12,8 @@ A real visitor sees a short "Checking your browser" step once. Their browser sol
 
 - **Protect by menu item.** Pick the menu items to protect, or protect the whole site and pick the ones to leave open.
 - **Protect modules too.** Pick modules or whole module positions (a footer with contact details, a price list in a sidebar). Visitors who haven't passed see a "Show content" placeholder or nothing at all, on every page the module appears on. Only one captcha is ever shown per page.
-- **Catches other routes to the same content.** A protected article reached through a different menu item or a bare `index.php` link is still protected, and so is anything inside a protected category. Blog and featured lists, tag lists and article modules show a short notice in place of its text, and feeds that would include it are refused.
+- **Catches other routes to the same content.** A protected article reached through a different menu item or a bare `index.php` link is still protected, and so is anything inside a protected category. Blog and featured lists, tag lists and article modules show a short notice in place of its text, and feeds that would include it are refused. Contacts and news feeds inside a protected category are covered the same way, and for other components the detail pages of a protected list (a member directory's profile pages, say) are protected when they're opened without one of that component's own menu items.
+- **Protect a view wherever it shows up.** For components whose detail pages can be reached under any menu item, list them as `component:view` (for example `com_osmembership:member`) and every page of that view is protected, whatever the link. Other views of the same component, such as sign-up or payment pages, stay open.
 - **Uses Joomla's own captcha system.** Joomla 6.1's core Proof-of-Work captcha is the default: no third-party service, nothing to click. Any other installed Joomla captcha plugin can be used instead, and more challenge options are planned.
 - **Visitors see your own template.** The URL and menu item stay the same and the check shows inside the site's normal template, then sends the visitor back to the page they asked for.
 - **One pass covers the site.** The pass is a signed cookie tied to the browser (and, if you want, the IP). You can reset every pass at once from the dashboard.
@@ -53,7 +54,7 @@ Updates arrive through Joomla's normal update manager (**System → Update → E
 
 | Tab | What's there |
 |---|---|
-| Protection | Protect selected pages or everything except selected pages; the menu item picker; "also catch other routes to the same content". |
+| Protection | Protect selected pages or everything except selected pages; the menu item picker; "also catch other routes to the same content"; "also protect these views" (`component:view` lines). |
 | Modules | Protected modules and module positions; placeholder or hide; placeholder text and button label. |
 | Challenge | Captcha plugin, what to do if it's unavailable, auto-start and auto-continue, how long a pass lasts, tie pass to IP, HTTP status of the check page, heading and message. |
 | Exemptions | Logged-in users, user groups, verified search engines, allow-listed IPs, where the visitor IP comes from (direct, Cloudflare, X-Forwarded-For, X-Real-IP) and which proxies to trust. |

@@ -55,6 +55,29 @@ final class ProtectionHelper
     public const MODULE_MODE_HIDE        = 'hide';
 
     /**
+     * One "Also protect these views" entry: component:view, lower case.
+     *
+     * @var    string
+     * @since  __DEPLOY_VERSION__
+     */
+    public const VIEW_ENTRY_PATTERN = '/^com_[a-z0-9_]+:[a-z0-9_.-]+$/';
+
+    /**
+     * Components whose lists are categories. A protected category list of one
+     * of these protects every item (and subcategory) inside that category,
+     * whichever menu item a request uses: articles, contacts, news feeds.
+     * com_content also has its own list and feed gate (getContentTargets()).
+     *
+     * @var    array<string, array{view: string, table: string}>
+     * @since  __DEPLOY_VERSION__
+     */
+    private const CATEGORY_COMPONENTS = [
+        'com_content'   => ['view' => 'article', 'table' => '#__content'],
+        'com_contact'   => ['view' => 'contact', 'table' => '#__contact_details'],
+        'com_newsfeeds' => ['view' => 'newsfeed', 'table' => '#__newsfeeds'],
+    ];
+
+    /**
      * Memoised "is this request protected?" answer.
      *
      * @var    boolean|null
@@ -129,7 +152,62 @@ final class ProtectionHelper
     public static function hasPageProtection(Registry $params): bool
     {
         return (string) $params->get('protection_mode', 'selected') === self::MODE_ALL_EXCEPT
-            || self::getMenuItemIds($params) !== [];
+            || self::getMenuItemIds($params) !== []
+            || self::getProtectedViews($params) !== [];
+    }
+
+    /**
+     * "Also protect these views" ("selected" mode only): component:view
+     * entries, lower case. Invalid entries are left out (Options refuses to
+     * save them, see ProtectviewsRule).
+     *
+     * @param   Registry  $params  Component params.
+     *
+     * @return  string[]
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    public static function getProtectedViews(Registry $params): array
+    {
+        if ((string) $params->get('protection_mode', self::MODE_SELECTED) !== self::MODE_SELECTED) {
+            return [];
+        }
+
+        return self::parseViewList((string) $params->get('protect_views', ''))['valid'];
+    }
+
+    /**
+     * Split an "Also protect these views" value into valid and invalid
+     * entries. One entry per line (commas also separate); "#" starts a comment
+     * that runs to the end of its line, so a commented-out line never leaves a
+     * live entry behind.
+     *
+     * @param   string  $text  Field value.
+     *
+     * @return  array{valid: string[], invalid: string[]}
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    public static function parseViewList(string $text): array
+    {
+        $valid   = [];
+        $invalid = [];
+
+        foreach (preg_split('/\R/', $text) ?: [] as $line) {
+            $line = trim((string) preg_replace('/#.*$/', '', $line));
+
+            foreach (preg_split('/[\s,]+/', $line, -1, PREG_SPLIT_NO_EMPTY) ?: [] as $entry) {
+                $normalised = strtolower($entry);
+
+                if (preg_match(self::VIEW_ENTRY_PATTERN, $normalised)) {
+                    $valid[] = $normalised;
+                } else {
+                    $invalid[] = $entry;
+                }
+            }
+        }
+
+        return ['valid' => array_values(array_unique($valid)), 'invalid' => $invalid];
     }
 
     /**
@@ -389,7 +467,9 @@ final class ProtectionHelper
             return !self::isExcludedRequest($app, $configured);
         }
 
-        if ($configured === []) {
+        $views = self::getProtectedViews($params);
+
+        if ($configured === [] && $views === []) {
             return false;
         }
 
@@ -397,11 +477,38 @@ final class ProtectionHelper
             return true;
         }
 
-        if ((int) $params->get('match_content', 1) !== 1) {
+        // "Also protect these views": whatever the Itemid, or none.
+        if ($views !== [] && self::matchesProtectedView($app, $views)) {
+            return true;
+        }
+
+        if ($configured === [] || (int) $params->get('match_content', 1) !== 1) {
             return false;
         }
 
         return self::matchesProtectedContent($app, $configured);
+    }
+
+    /**
+     * Is the request for one of the "Also protect these views" views?
+     *
+     * @param   CMSApplicationInterface  $app    The application.
+     * @param   string[]                 $views  From getProtectedViews().
+     *
+     * @return  boolean
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function matchesProtectedView(CMSApplicationInterface $app, array $views): bool
+    {
+        $input = $app->getInput();
+        $view  = strtolower($input->getCmd('view', ''));
+
+        if ($view === '') {
+            return false;
+        }
+
+        return \in_array(strtolower($input->getCmd('option', '')) . ':' . $view, $views, true);
     }
 
     /**
@@ -760,7 +867,7 @@ final class ProtectionHelper
         $id = (int) $request['id'];
 
         if ($categories !== [] && $id > 0 && \in_array($request['view'], ['article', 'category'], true)) {
-            return self::isInsideCategories($request['view'], $id, $categories);
+            return self::isInsideCategories('com_content', $request['view'], $id, $categories);
         }
 
         return false;
@@ -768,8 +875,14 @@ final class ProtectionHelper
 
     /**
      * Catch requests for protected content reached through a different (or
-     * forged) Itemid: same component + view + id as a protected menu item, or a
-     * com_content article / category that sits inside a protected category.
+     * forged) Itemid, or none:
+     *
+     * - same component + view + id as a protected menu item;
+     * - an article / contact / news feed (or a subcategory) inside a protected
+     *   category of com_content, com_contact or com_newsfeeds;
+     * - any other component: the detail view of a protected list (a protected
+     *   "members" list covers "member") when the request isn't on one of that
+     *   component's own menu items (issue #16).
      *
      * @param   CMSApplicationInterface  $app         The application.
      * @param   int[]                    $configured  Protected menu item ids.
@@ -781,60 +894,143 @@ final class ProtectionHelper
     private static function matchesProtectedContent(CMSApplicationInterface $app, array $configured): bool
     {
         $input  = $app->getInput();
-        $option = $input->getCmd('option', '');
-        $view   = $input->getCmd('view', '');
+        $option = strtolower($input->getCmd('option', ''));
+        $view   = strtolower($input->getCmd('view', ''));
         $id     = $input->getInt('id', 0);
         $menu   = $app->getMenu();
 
+        $categoryComponent   = self::CATEGORY_COMPONENTS[$option] ?? null;
         $protectedCategories = [];
+        $detailViews         = [];
 
         foreach ($configured as $menuItemId) {
             $item = $menu->getItem($menuItemId);
 
-            if (!$item || (string) ($item->query['option'] ?? '') !== $option) {
+            if (!$item || strtolower((string) ($item->query['option'] ?? '')) !== $option) {
                 continue;
             }
 
-            $itemView = (string) ($item->query['view'] ?? '');
+            $itemView = strtolower((string) ($item->query['view'] ?? ''));
             $itemId   = (int) ($item->query['id'] ?? 0);
 
             if ($itemView === $view && $itemId === $id) {
                 return true;
             }
 
-            if ($option === 'com_content' && $itemView === 'category' && $itemId > 0) {
-                $protectedCategories[] = $itemId;
+            if ($categoryComponent !== null) {
+                if ($itemView === 'category' && $itemId > 0) {
+                    $protectedCategories[] = $itemId;
+                }
+            } else {
+                $detailViews = array_merge($detailViews, self::detailViewsOf($itemView));
             }
         }
 
-        if ($protectedCategories === [] || $id <= 0 || !\in_array($view, ['article', 'category'], true)) {
+        if ($categoryComponent !== null) {
+            if ($protectedCategories === [] || $id <= 0 || !\in_array($view, [$categoryComponent['view'], 'category'], true)) {
+                return false;
+            }
+
+            return self::isInsideCategories($option, $view, $id, $protectedCategories);
+        }
+
+        if ($view === '' || !\in_array($view, $detailViews, true)) {
             return false;
         }
 
-        return self::isInsideCategories($view, $id, $protectedCategories);
+        return self::isOffMenuRequest($app, $option);
     }
 
     /**
-     * Is the article / category inside (or equal to) one of the given
-     * com_content categories? Uses the nested-set lft/rgt columns.
+     * Likely names of the detail view that belongs to a list view: the
+     * singular ("members" -> "member", "entries" -> "entry", "boxes" -> "box").
+     * Extra guesses that aren't a real view never match a request.
      *
-     * @param   string  $view         'article' or 'category'.
-     * @param   int     $id           Article or category id.
+     * @param   string  $listView  The protected menu item's view, lower case.
+     *
+     * @return  string[]
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    public static function detailViewsOf(string $listView): array
+    {
+        $views = [];
+
+        if (\strlen($listView) > 3 && str_ends_with($listView, 'ies')) {
+            $views[] = substr($listView, 0, -3) . 'y';
+        }
+
+        if (\strlen($listView) > 2 && str_ends_with($listView, 'es')) {
+            $views[] = substr($listView, 0, -2);
+        }
+
+        if (\strlen($listView) > 1 && str_ends_with($listView, 's') && !str_ends_with($listView, 'ss')) {
+            $views[] = substr($listView, 0, -1);
+        }
+
+        return $views;
+    }
+
+    /**
+     * Is the request outside the component's own menu items? True with no
+     * menu item, the home item (where Joomla puts links it can't place), a
+     * menu item of another component, or an unknown Itemid. A menu item of the
+     * same component is trusted: it's either the protected item (checked
+     * first) or one of the component's public pages.
+     *
+     * @param   CMSApplicationInterface  $app     The application.
+     * @param   string                   $option  Request component, lower case.
+     *
+     * @return  boolean
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function isOffMenuRequest(CMSApplicationInterface $app, string $option): bool
+    {
+        $menu   = $app->getMenu();
+        $active = $menu->getActive();
+
+        if (!$active) {
+            $itemId = $app->getInput()->getInt('Itemid', 0);
+            $active = $itemId > 0 ? $menu->getItem($itemId) : null;
+        }
+
+        if (!$active || (int) $active->id <= 0 || (int) ($active->home ?? 0) === 1) {
+            return true;
+        }
+
+        return strtolower((string) ($active->query['option'] ?? '')) !== $option;
+    }
+
+    /**
+     * Is the item / category inside (or equal to) one of the given categories
+     * of a category component (com_content, com_contact, com_newsfeeds)? Uses
+     * the nested-set lft/rgt columns.
+     *
+     * @param   string  $option       Component, a CATEGORY_COMPONENTS key.
+     * @param   string  $view         The component's item view ('article', 'contact', 'newsfeed') or 'category'.
+     * @param   int     $id           Item or category id.
      * @param   int[]   $categoryIds  Protected category ids.
      *
      * @return  boolean
      *
      * @since   0.1.0
      */
-    private static function isInsideCategories(string $view, int $id, array $categoryIds): bool
+    private static function isInsideCategories(string $option, string $view, int $id, array $categoryIds): bool
     {
+        $component = self::CATEGORY_COMPONENTS[$option] ?? null;
+
+        if ($component === null) {
+            return false;
+        }
+
         try {
             $db = Factory::getContainer()->get(DatabaseInterface::class);
 
-            if ($view === 'article') {
+            if ($view === $component['view']) {
                 $query = $db->createQuery()
                     ->select([$db->quoteName('c.lft'), $db->quoteName('c.rgt')])
-                    ->from($db->quoteName('#__content', 'a'))
+                    ->from($db->quoteName($component['table'], 'a'))
                     ->join('INNER', $db->quoteName('#__categories', 'c'), $db->quoteName('c.id') . ' = ' . $db->quoteName('a.catid'))
                     ->where($db->quoteName('a.id') . ' = :id')
                     ->bind(':id', $id, ParameterType::INTEGER);
@@ -843,8 +1039,9 @@ final class ProtectionHelper
                     ->select([$db->quoteName('lft'), $db->quoteName('rgt')])
                     ->from($db->quoteName('#__categories'))
                     ->where($db->quoteName('id') . ' = :id')
-                    ->where($db->quoteName('extension') . ' = ' . $db->quote('com_content'))
-                    ->bind(':id', $id, ParameterType::INTEGER);
+                    ->where($db->quoteName('extension') . ' = :extension')
+                    ->bind(':id', $id, ParameterType::INTEGER)
+                    ->bind(':extension', $option);
             }
 
             $target = $db->setQuery($query)->loadObject();

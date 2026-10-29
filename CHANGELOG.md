@@ -2,6 +2,15 @@
 
 All notable changes to Cybersalt Page Protector are documented here. Only released versions are listed. People whose ideas or reports shaped a change are credited on that entry.
 
+## [Unreleased]
+
+### 🔍 Security
+- Detail pages of a protected list could be opened without the check when the link had no menu item, the home menu item or another component's menu item. Example: with a member directory list (`view=members`) protected, a profile page (`view=member&id=17`) opened through a plain `index.php` link showed the full profile, and profile ids are easy to walk. "Also catch other routes to the same content" now covers these pages. For contacts and news feeds it works like articles already did: everything inside a protected category is protected, whatever menu item the link uses. For other components, the detail view of a protected list (`members` → `member`) is protected when it's opened without one of that component's own menu items. Other views of the same component, such as sign-up and payment pages, stay open (#16).
+- Component and view names are now compared without regard to case, so `view=CONTACT` can't step around a protected `view=contact` on servers where it still opens the same page.
+
+### 🚀 New
+- **Also protect these views** on the Protection tab: list `component:view` pairs, one per line (for example `com_osmembership:member`), and every page of that view is protected, whatever menu item the link uses or none. Use it when a component's detail pages can also be opened under one of its own public menu items. Entries that aren't `component:view` are refused when Options are saved, and the dashboard lists the protected views (#16).
+
 ## [0.2.1] - 2026-10-20
 
 ### 📦 Packaging

@@ -5,6 +5,7 @@
         label="COM_CSPAGEPROTECTOR_FIELDSET_PROTECTION"
         description="COM_CSPAGEPROTECTOR_FIELDSET_PROTECTION_DESC"
         addfieldprefix="Cybersalt\Component\Cspageprotector\Administrator\Field"
+        addruleprefix="Cybersalt\Component\Cspageprotector\Administrator\Rule"
     >
         <field
             name="brand_protection"
@@ -49,6 +50,19 @@
             <option value="1">JYES</option>
             <option value="0">JNO</option>
         </field>
+
+        <field
+            name="protect_views"
+            type="textarea"
+            label="COM_CSPAGEPROTECTOR_FIELD_PROTECT_VIEWS_LABEL"
+            description="COM_CSPAGEPROTECTOR_FIELD_PROTECT_VIEWS_DESC"
+            hint="COM_CSPAGEPROTECTOR_FIELD_PROTECT_VIEWS_HINT"
+            rows="3"
+            filter="string"
+            validate="Protectviews"
+            message="COM_CSPAGEPROTECTOR_FIELD_PROTECT_VIEWS_INVALID"
+            showon="protection_mode:selected"
+        />
     </fieldset>
 
     <fieldset

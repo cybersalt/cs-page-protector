@@ -16,6 +16,8 @@ use Joomla\CMS\Application\CMSApplicationInterface;
 use Joomla\CMS\Cache\CacheControllerFactoryInterface;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Language\LanguageHelper;
+use Joomla\CMS\Log\Log;
 use Joomla\CMS\MVC\Controller\BaseController;
 use Joomla\CMS\MVC\Factory\MVCFactory;
 use Joomla\CMS\MVC\Factory\MVCFactoryServiceInterface;
@@ -95,6 +97,57 @@ final class ProtectionHelper
      * @since  __DEPLOY_VERSION__
      */
     private const SINGLE_VALUE_KEYS = ['option', 'view', 'id', 'Itemid', 'task', 'controller', 'layout', 'format'];
+
+    /**
+     * The view of a request whose page can't be worked out: a task the
+     * controller's code doesn't let us map to a method, or a task method that
+     * renders something other than a plain view. Matched like the component's
+     * default view (any protected item of the component), and no menu item
+     * ever vouches for it.
+     *
+     * @var    string
+     * @since  __DEPLOY_VERSION__
+     */
+    private const UNKNOWN_VIEW = '?';
+
+    /**
+     * Core components whose site pages pick their record by `id` alone (com_tags
+     * by a list of ids). Every other component may pick it by another key too
+     * (see RECORD_KEY_PATTERN).
+     *
+     * @var    string[]
+     * @since  __DEPLOY_VERSION__
+     */
+    private const ID_ONLY_COMPONENTS = ['com_content', 'com_contact', 'com_newsfeeds', 'com_tags'];
+
+    /**
+     * Request keys that may pick a record: id, *_id, cid, uid, user_id, slug,
+     * alias, username and the like. Never Itemid (the menu item) or utm_*
+     * campaign tags.
+     *
+     * @var    string
+     * @since  __DEPLOY_VERSION__
+     */
+    private const RECORD_KEY_PATTERN = '/^(?:id|ids|cid|uid|pid|aid|a_id|catid|slug|alias|username|user|userid|memberid|profileid|productid|itemid|articleid|eventid|orderid|postid|uuid|guid)$|_(?:id|ids|uid|uuid|slug|alias|username)$|^id_/i';
+
+    /**
+     * BaseController methods that change the task map.
+     *
+     * @var    string[]
+     * @since  __DEPLOY_VERSION__
+     */
+    private const TASK_CALLS = ['registertask', 'unregistertask', 'registerdefaulttask'];
+
+    /**
+     * Calls that show a page: a controller's display(), a view object's
+     * display(), and getting a view object (getView(), createView()).
+     * render() is left out: it also builds emails and JSON answers (core
+     * com_contact renders its custom fields into the contact email).
+     *
+     * @var    string[]
+     * @since  __DEPLOY_VERSION__
+     */
+    private const RENDER_CALLS = ['display', 'getview', 'createview'];
 
     /**
      * Components whose lists are categories. A protected category list of one
@@ -486,7 +539,19 @@ final class ProtectionHelper
     public static function isProtectedRequest(CMSApplicationInterface $app, Registry $params): bool
     {
         if (self::$protectedMemo === null) {
-            self::$protectedMemo = self::computeProtected($app, $params);
+            try {
+                self::$protectedMemo = self::computeProtected($app, $params);
+            } catch (\Throwable $e) {
+                // Can't tell: protected (fail closed). The challenge page and
+                // com_ajax return before anything that can throw.
+                self::$protectedMemo = $app->isClient('site');
+
+                try {
+                    Log::add('cs-page-protector could not classify a request (checked): ' . $e->getMessage(), Log::ERROR, 'com_cspageprotector');
+                } catch (\Throwable $ignored) {
+                    // Nothing more to do.
+                }
+            }
         }
 
         return self::$protectedMemo;
@@ -682,9 +747,11 @@ final class ProtectionHelper
         // array option or Itemid can't be tied to a component or menu item,
         // and in "every page except" mode every component has something
         // protected, so those are protected straight away. Otherwise only a
-        // component with something protected counts (below): com_tags menu
-        // items carry their tag as id[0]=N, and strict routing sends that on.
-        $arrays    = array_values(array_filter(self::SINGLE_VALUE_KEYS, static fn (string $key): bool => self::singleValue($input, $key) === null));
+        // component with something protected counts (below). com_tags reads
+        // its `id` as a list of tags (its menu items carry id[0]=N, which
+        // strict routing sends on), so a readable com_tags id list is matched
+        // tag by tag instead (see tagIds()).
+        $arrays    = self::arrayKeys($input, $option);
         $allExcept = (string) $params->get('protection_mode', self::MODE_SELECTED) === self::MODE_ALL_EXCEPT;
 
         if ($arrays !== [] && ($option === null || $allExcept || \in_array('Itemid', $arrays, true))) {
@@ -770,19 +837,336 @@ final class ProtectionHelper
     }
 
     /**
+     * The request keys (of SINGLE_VALUE_KEYS) sent as an array. A com_tags
+     * `id` list that can be read (see tagIds()) doesn't count.
+     *
+     * @param   Input        $input   The request input.
+     * @param   string|null  $option  Request component, lower case (null: an array).
+     *
+     * @return  string[]
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function arrayKeys(Input $input, ?string $option): array
+    {
+        $arrays = [];
+
+        foreach (self::SINGLE_VALUE_KEYS as $key) {
+            // com_tags: a list (or one value) every reader takes the same way.
+            if ($key === 'id' && $option === 'com_tags') {
+                if (self::tagIds($input->get('id', null, 'raw')) === null) {
+                    $arrays[] = $key;
+                }
+
+                continue;
+            }
+
+            if (self::singleValue($input, $key) === null) {
+                $arrays[] = $key;
+            }
+        }
+
+        return $arrays;
+    }
+
+    /**
+     * The tag ids a com_tags `id` value names, the way com_tags reads it
+     * (TagModel: a list, one entry may hold several ids separated by commas,
+     * "6:alias" counts as 6, entries without a number are dropped). Null
+     * when a part can't be read the same way by every reader (a nested array,
+     * "6e1", "+6"): such a request is treated as protected.
+     *
+     * @param   mixed  $value  The raw `id` value (request or menu link).
+     *
+     * @return  int[]|null
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function tagIds($value): ?array
+    {
+        if ($value === null || $value === '') {
+            return [];
+        }
+
+        $values = \is_array($value) ? array_values($value) : [$value];
+
+        if (\count($values) === 1 && \is_scalar($values[0])) {
+            $values = explode(',', (string) $values[0]);
+        }
+
+        $ids = [];
+
+        foreach ($values as $entry) {
+            if (!\is_scalar($entry)) {
+                return null;
+            }
+
+            $entry = trim((string) $entry);
+
+            if (preg_match('/^(\d{1,18})(?::[^,]*)?$/', $entry, $m)) {
+                if ((int) $m[1] > 0) {
+                    $ids[] = (int) $m[1];
+                }
+
+                continue;
+            }
+
+            if ($entry === '' || !preg_match('/\d/', $entry)) {
+                continue;
+            }
+
+            return null;
+        }
+
+        return array_values(array_unique($ids));
+    }
+
+    /**
+     * The record ids a menu link names: its `id` (com_tags: its list of
+     * tags). Empty when the link has none (a list); [-1] when it can't be
+     * read (matches nothing, and never vouches).
+     *
+     * @param   string                $option  Component, lower case.
+     * @param   array<string, mixed>  $query   Menu item query.
+     *
+     * @return  int[]
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function linkIds(string $option, array $query): array
+    {
+        if ($option === 'com_tags') {
+            return self::tagIds($query['id'] ?? null) ?? [-1];
+        }
+
+        $id = self::queryId($query);
+
+        return $id === 0 ? [] : [$id];
+    }
+
+    /**
+     * The record ids a request names (see describeRequest()).
+     *
+     * @param   array<string, mixed>  $request  From describeRequest().
+     *
+     * @return  int[]
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function requestIds(array $request): array
+    {
+        if (\is_array($request['ids'] ?? null)) {
+            return $request['ids'];
+        }
+
+        return (int) $request['id'] === 0 ? [] : [(int) $request['id']];
+    }
+
+    /**
+     * Do two id lists name exactly the same records?
+     *
+     * @param   int[]  $a  Ids.
+     * @param   int[]  $b  Ids.
+     *
+     * @return  boolean
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function sameIds(array $a, array $b): bool
+    {
+        sort($a);
+        sort($b);
+
+        return $a === $b;
+    }
+
+    /**
+     * Is this request key one that may pick a record (see RECORD_KEY_PATTERN)?
+     *
+     * @param   string  $name  Request or menu link key.
+     *
+     * @return  boolean
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function isRecordKey(string $name): bool
+    {
+        return $name !== 'Itemid' && !preg_match('/^utm_/i', $name) && preg_match(self::RECORD_KEY_PATTERN, $name) === 1;
+    }
+
+    /**
+     * The keys other than `id` that may pick a record, with their raw values.
+     * Core components that pick their record by `id` alone have none.
+     *
+     * @param   string                $option  Component, lower case.
+     * @param   array<string, mixed>  $values  Menu link query or request data.
+     *
+     * @return  array<string, mixed>
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function recordKeys(string $option, array $values): array
+    {
+        if (\in_array($option, self::ID_ONLY_COMPONENTS, true)) {
+            return [];
+        }
+
+        $keys = [];
+
+        foreach ($values as $name => $value) {
+            $name = (string) $name;
+
+            if ($name !== 'id' && self::isRecordKey($name)) {
+                $keys[$name] = $value;
+            }
+        }
+
+        return $keys;
+    }
+
+    /**
+     * The record keys of the request (see recordKeys()).
+     *
+     * @param   Input   $input   The request input.
+     * @param   string  $option  Request component, lower case.
+     *
+     * @return  array<string, mixed>
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function requestRecordKeys(Input $input, string $option): array
+    {
+        if (\in_array($option, self::ID_ONLY_COMPONENTS, true)) {
+            return [];
+        }
+
+        $values = [];
+
+        foreach (array_keys((array) $input->getArray()) as $name) {
+            $name = (string) $name;
+
+            if ($name !== 'id' && self::isRecordKey($name)) {
+                $values[$name] = $input->get($name, null, 'raw');
+            }
+        }
+
+        return $values;
+    }
+
+    /**
+     * Does the key hold a numeric id (id, *_id, cid, catid, userid and the like)?
+     *
+     * @param   string  $name  Key.
+     *
+     * @return  boolean
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function isIdKey(string $name): bool
+    {
+        return preg_match('/(?:id|ids)$|^id_/i', $name) === 1;
+    }
+
+    /**
+     * A clean numeric id: "5", or a "5:alias" slug. Null for anything else.
+     *
+     * @param   string  $value  Trimmed value.
+     *
+     * @return  integer|null
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function cleanId(string $value): ?int
+    {
+        return preg_match('/^(\d{1,18})(?::.*)?$/s', $value, $m) ? (int) $m[1] : null;
+    }
+
+    /**
+     * Are two record key values certainly the same record? Strict: used
+     * before a menu item may vouch for a request or exclude it.
+     *
+     * @param   string  $key  Key name.
+     * @param   mixed   $a    Value.
+     * @param   mixed   $b    Value.
+     *
+     * @return  boolean
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function sameValue(string $key, $a, $b): bool
+    {
+        if (!\is_scalar($a) || !\is_scalar($b)) {
+            return false;
+        }
+
+        $a = trim((string) $a);
+        $b = trim((string) $b);
+
+        if ($a === '' || $b === '') {
+            return false;
+        }
+
+        if (self::isIdKey($key)) {
+            $id = self::cleanId($a);
+
+            return $id !== null && $id === self::cleanId($b);
+        }
+
+        return $a === $b;
+    }
+
+    /**
+     * Could two record key values be the same record? Loose: false only when
+     * they are certainly different (two clean numbers, or two plain ASCII
+     * words that differ in more than case). Used to match protected records.
+     *
+     * @param   string  $key  Key name.
+     * @param   mixed   $a    Value.
+     * @param   mixed   $b    Value.
+     *
+     * @return  boolean
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function mayBeSame(string $key, $a, $b): bool
+    {
+        if (!\is_scalar($a) || !\is_scalar($b)) {
+            return true;
+        }
+
+        $a = trim((string) $a);
+        $b = trim((string) $b);
+
+        if (self::isIdKey($key)) {
+            $x = self::cleanId($a);
+            $y = self::cleanId($b);
+
+            return $x === null || $y === null || $x === $y;
+        }
+
+        if (preg_match('/^[A-Za-z0-9_-]+$/', $a) && preg_match('/^[A-Za-z0-9_-]+$/', $b)) {
+            return self::asciiLower($a) === self::asciiLower($b);
+        }
+
+        return true;
+    }
+
+    /**
      * The parts of the request the rules match on: component, the view
-     * Joomla will show (see resolveView()) and id.
+     * Joomla will show (see resolveView()), id, the com_tags id list, and the
+     * other keys that may pick a record (third-party components).
      *
      * @param   CMSApplicationInterface  $app     The application.
      * @param   string                   $option  Request component, lower case.
      *
-     * @return  array{option: string, view: ?string, id: int}
+     * @return  array{option: string, view: ?string, id: int, ids: int[]|null, keys: array<string, mixed>}
      *
      * @since   __DEPLOY_VERSION__
      */
     private static function describeRequest(CMSApplicationInterface $app, string $option): array
     {
         $input = $app->getInput();
+        $ids   = $option === 'com_tags' ? (self::tagIds($input->get('id', null, 'raw')) ?? [-1]) : null;
 
         return [
             'option' => $option,
@@ -793,7 +1177,9 @@ final class ProtectionHelper
                 (string) self::singleValue($input, 'task'),
                 (string) self::singleValue($input, 'controller')
             ),
-            'id'     => (int) (self::singleValue($input, 'id', 'int', '0') ?? 0),
+            'id'     => $ids !== null ? (\count($ids) === 1 ? $ids[0] : 0) : (int) (self::singleValue($input, 'id', 'int', '0') ?? 0),
+            'ids'    => $ids,
+            'keys'   => self::requestRecordKeys($input, $option),
         ];
     }
 
@@ -802,22 +1188,27 @@ final class ProtectionHelper
      * request can't step around a view rule by leaving `view` out:
      *
      * - ComponentDispatcher runs `task=<controller>.<method>` (or
-     *   `controller=` plus `task=<method>`). A method the controller has, or
-     *   a task alias of one, other than display(), runs instead of a page
-     *   view;
-     * - otherwise display() runs (a method the controller doesn't have falls
-     *   back to it as well) and shows `view`, or with no `view` the view
-     *   named after the controller.
+     *   `controller=` plus `task=<method>`). BaseController::execute() looks
+     *   the task up in the controller's task map (its public methods plus the
+     *   task aliases its constructor registers, see taskTarget()) and falls
+     *   back to the default task, display();
+     * - a task that runs a method other than display() is a real task (a
+     *   form submit, a payment callback, an AJAX call) unless the method
+     *   renders a page itself (see methodRendering()): then the request is
+     *   that page;
+     * - display() shows `view`, or with no `view` the view named after the
+     *   controller.
      *
-     * The result is null when the request runs a real task that isn't
-     * display() (a form submit, a payment callback, an AJAX call), so the
-     * view rules never touch those. It is '' when the page is the
+     * The result is null for a real task that shows no page of its own, so
+     * the view rules never touch those. It is '' when the page is the
      * component's own default view, when a named controller has its own
      * display() (it may show any view, whatever `view` says), or for a
      * component whose controllers can't be read (older, non-namespaced
      * components): the rules then treat the request as any view of that
      * component, unless it is exactly the page of the menu item it was
-     * opened under.
+     * opened under. It is UNKNOWN_VIEW when the task can't be mapped to a
+     * method, or the method renders something that can't be named: treated
+     * as any view of that component, and no menu item vouches for it.
      *
      * @param   CMSApplicationInterface  $app         The application.
      * @param   string                   $option      Component, lower case.
@@ -853,11 +1244,34 @@ final class ProtectionHelper
         $custom = $named && $controller !== 'display';
         $class  = $method === 'display' && $view !== '' && !$custom ? null : self::controllerClass($app, $option, $named ? $controller : 'display');
 
-        // A real task of the controller runs instead of display(), whatever
-        // `view` says (the router fills `view` in from the menu item, so a
-        // form submit or a payment callback often carries one).
-        if ($class !== null && $method !== 'display' && \in_array($method, self::controllerTasks($class), true)) {
-            return null;
+        if ($class !== null && $method !== 'display') {
+            // The method BaseController::execute() will run for this task.
+            $target = self::taskTarget($app, $option, $class, $named ? $controller : '', $method);
+
+            if ($target === null) {
+                return self::UNKNOWN_VIEW;
+            }
+
+            if ($target !== 'display') {
+                $rendering = self::methodRendering($class, $target);
+
+                // A real task: the router fills `view` in from the menu item,
+                // so a form submit or a payment callback often carries one.
+                if ($rendering === null) {
+                    return null;
+                }
+
+                if ($rendering === self::UNKNOWN_VIEW) {
+                    return self::UNKNOWN_VIEW;
+                }
+
+                // The method sets a view and calls display().
+                if ($rendering !== '') {
+                    return $custom && self::hasOwnDisplay($class) ? self::UNKNOWN_VIEW : $rendering;
+                }
+
+                // It calls display() with the request's view: as below.
+            }
         }
 
         // A named controller with its own display() can show any view, not
@@ -911,6 +1325,14 @@ final class ProtectionHelper
     private static array $controllerClasses = [];
 
     /**
+     * The component MVC factories found by controllerClass(), keyed by option.
+     *
+     * @var    array<string, MVCFactory>
+     * @since  __DEPLOY_VERSION__
+     */
+    private static array $factories = [];
+
+    /**
      * The site controller class ComponentDispatcher would create for this
      * component and controller name, or null when it can't be told: an older
      * component without a namespace (its own entry file picks the
@@ -946,7 +1368,8 @@ final class ProtectionHelper
                         $candidate = trim($namespace, '\\') . '\\Site\\Controller\\' . ucfirst($name) . 'Controller';
 
                         if (class_exists($candidate) && is_subclass_of($candidate, BaseController::class)) {
-                            $class = $candidate;
+                            $class                    = $candidate;
+                            self::$factories[$option] = $factory;
                         }
                     }
                 }
@@ -980,7 +1403,35 @@ final class ProtectionHelper
     /**
      * BaseController's own methods, every visibility, the way its constructor
      * sees them when it registers tasks (get_class_methods() called from
-     * inside the class).
+     * inside the class). Null when they can't be read.
+     *
+     * @return  string[]|null
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function baseControllerMethods(): ?array
+    {
+        if (self::$baseControllerMethods !== null) {
+            return self::$baseControllerMethods;
+        }
+
+        try {
+            $reader = \Closure::bind(static fn (): array => get_class_methods(BaseController::class), null, BaseController::class);
+
+            if (!$reader instanceof \Closure) {
+                return null;
+            }
+
+            $methods = $reader();
+        } catch (\Throwable $e) {
+            return null;
+        }
+
+        return \is_array($methods) && $methods !== [] ? self::$baseControllerMethods = $methods : null;
+    }
+
+    /**
+     * Memoised baseControllerMethods() result.
      *
      * @var    string[]|null
      * @since  __DEPLOY_VERSION__
@@ -988,155 +1439,984 @@ final class ProtectionHelper
     private static ?array $baseControllerMethods = null;
 
     /**
-     * The tasks a controller answers (lower case), other than ones that show
-     * a page, the way BaseController registers them: its public methods,
-     * minus BaseController's own (of any visibility) except display(), plus
-     * the task aliases its code registers (see controllerAliases()). An alias
-     * that points at display(), or one that's unregistered again, is left
-     * out: Joomla shows a page for it.
+     * The method (lower case) BaseController::execute() will run for this
+     * task of this controller, or null when that can't be told for certain.
      *
-     * @param   string  $class  Controller class.
+     * The task map is first read from the source (see readTaskMap()). When a
+     * line of the source that could change this task's entry can't be read
+     * with certainty (a conditional or non-literal registerTask(), one made
+     * outside the constructor, and the like), the controller is built through
+     * the component's MVC factory, as the dispatcher will build it, and its
+     * real task map is used (see liveTaskMap()). Null when neither works: the
+     * request is then treated as a page of unknown view (fail closed).
      *
-     * @return  string[]
+     * @param   CMSApplicationInterface  $app     The application.
+     * @param   string                   $option  Component, lower case.
+     * @param   string                   $class   Controller class.
+     * @param   string                   $name    Controller name from the request ('' for the DisplayController).
+     * @param   string                   $task    Task (the method part), lower case.
+     *
+     * @return  string|null
      *
      * @since   __DEPLOY_VERSION__
      */
-    private static function controllerTasks(string $class): array
+    private static function taskTarget(CMSApplicationInterface $app, string $option, string $class, string $name, string $task): ?string
     {
-        self::$baseControllerMethods ??= (array) \Closure::bind(
-            static fn (): array => get_class_methods(BaseController::class),
-            null,
-            BaseController::class
-        )();
+        $read = self::staticTaskMap($class);
 
-        $base  = self::$baseControllerMethods;
-        $tasks = [];
-
-        try {
-            foreach ((new \ReflectionClass($class))->getMethods(\ReflectionMethod::IS_PUBLIC) as $method) {
-                $name = $method->getName();
-
-                if ($name === 'display' || !\in_array($name, $base, true)) {
-                    $tasks[] = self::asciiLower($name);
-                }
+        if ($read !== null && !$read['all'] && !\in_array($task, $read['unsure'], true)) {
+            if (\array_key_exists($task, $read['map'])) {
+                return $read['map'][$task];
             }
-        } catch (\ReflectionException $e) {
-            return [];
-        }
 
-        // registerTask() only takes a method the controller has (or display).
-        $methods = $tasks;
-
-        foreach (self::controllerAliases($class) as $alias => $target) {
-            $tasks = array_values(array_diff($tasks, [$alias]));
-
-            if ($target !== null && $target !== 'display' && \in_array($target, $methods, true)) {
-                $tasks[] = $alias;
+            if (!\in_array('__default', $read['unsure'], true)) {
+                return $read['map']['__default'] ?? null;
             }
         }
 
-        return $tasks;
+        $live = self::liveTaskMap($app, $option, $class, $name, $task);
+
+        if ($live === null) {
+            return null;
+        }
+
+        return $live[$task] ?? $live['__default'] ?? null;
     }
 
     /**
-     * Memoised controllerAliases() results, keyed by class.
+     * Memoised readTaskMap() results, keyed by class.
      *
-     * @var    array<string, array<string, string|null>>
+     * @var    array<string, array{map: array<string, string>, unsure: string[], all: bool}|null>
      * @since  __DEPLOY_VERSION__
      */
-    private static array $aliasMemo = [];
+    private static array $taskMaps = [];
 
     /**
-     * Task aliases a controller registers, read from the source of the class
-     * and its parents up to BaseController (parents first, so a subclass
-     * wins): `registerTask('notify', 'callback')` gives notify => callback,
-     * `unregisterTask('notify')` gives notify => null. The controller is
-     * never created, so none of its code runs. Only calls with plain quoted
-     * names count; anything else is left out, and the request then counts as
-     * a page view (fail closed). Without PHP's tokenizer, no aliases.
+     * readTaskMap(), memoised, null on any failure.
      *
      * @param   string  $class  Controller class.
      *
-     * @return  array<string, string|null>  Lower-case alias => lower-case method, or null.
+     * @return  array{map: array<string, string>, unsure: string[], all: bool}|null
      *
      * @since   __DEPLOY_VERSION__
      */
-    private static function controllerAliases(string $class): array
+    private static function staticTaskMap(string $class): ?array
     {
-        if (isset(self::$aliasMemo[$class])) {
-            return self::$aliasMemo[$class];
+        if (\array_key_exists($class, self::$taskMaps)) {
+            return self::$taskMaps[$class];
         }
-
-        $aliases = [];
 
         try {
-            if (!\function_exists('token_get_all')) {
-                return self::$aliasMemo[$class] = [];
-            }
-
-            $files = [];
-
-            for ($reflection = new \ReflectionClass($class); $reflection && $reflection->getName() !== BaseController::class; $reflection = $reflection->getParentClass() ?: null) {
-                $file = $reflection->getFileName();
-
-                if (\is_string($file) && is_file($file)) {
-                    array_unshift($files, $file);
-                }
-            }
-
-            foreach (array_unique($files) as $file) {
-                $tokens = array_values(array_filter(
-                    token_get_all((string) file_get_contents($file)),
-                    static fn ($token): bool => !\is_array($token) || !\in_array($token[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)
-                ));
-
-                foreach ($tokens as $i => $token) {
-                    if (!\is_array($token) || $token[0] !== T_STRING || ($tokens[$i + 1] ?? null) !== '(') {
-                        continue;
-                    }
-
-                    $call  = self::asciiLower($token[1]);
-                    $first = self::taskNameToken($tokens[$i + 2] ?? null);
-
-                    if ($first === null || $first === '__default') {
-                        continue;
-                    }
-
-                    if ($call === 'registertask' && ($tokens[$i + 3] ?? null) === ',' && ($tokens[$i + 5] ?? null) === ')') {
-                        $second = self::taskNameToken($tokens[$i + 4] ?? null);
-
-                        if ($second !== null) {
-                            $aliases[$first] = $second;
-                        }
-                    } elseif ($call === 'unregistertask' && ($tokens[$i + 3] ?? null) === ')') {
-                        $aliases[$first] = null;
-                    }
-                }
-            }
+            $base   = self::baseControllerMethods();
+            $result = $base === null ? null : self::readTaskMap($class, $base);
         } catch (\Throwable $e) {
-            $aliases = [];
+            $result = null;
         }
 
-        return self::$aliasMemo[$class] = $aliases;
+        return self::$taskMaps[$class] = $result;
+    }
+
+    /**
+     * The task map a controller builds, read from the source of the class and
+     * its parents up to BaseController, without running any of it:
+     *
+     * - every public method (minus BaseController's own, except display()),
+     *   lower case, maps to itself, and __default to display(), as
+     *   BaseController's constructor does;
+     * - then, parents first, each constructor's `$this->registerTask('a',
+     *   'b')`, `unregisterTask('a')` and `registerDefaultTask('b')` with
+     *   plain quoted names, written as a statement of its own at the top
+     *   level of __construct(), after `parent::__construct(...)` and before
+     *   any `return` (chained calls count too). registerTask() only takes a
+     *   method the controller has, as Joomla checks.
+     *
+     * Anything else that can change the map leaves it unsure: such a call
+     * anywhere else in the files (inside an if, a loop, a try, a closure,
+     * another method, a trait) makes its task "unsure" when its first name
+     * is plain (registerDefaultTask: the default task), and the whole map
+     * ("all") when it isn't; so do a write to taskMap, the names of those
+     * methods inside strings, dynamic calls (`$this->$name()`,
+     * call_user_func()), a constructor without a top-level
+     * `parent::__construct()` or one using the alternative if/endif syntax,
+     * and a `default_task` setting (the default task).
+     *
+     * @param   string    $class  Controller class.
+     * @param   string[]  $base   BaseController's own methods.
+     *
+     * @return  array{map: array<string, string>, unsure: string[], all: bool}|null
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function readTaskMap(string $class, array $base): ?array
+    {
+        $reflection = new \ReflectionClass($class);
+        $methods    = [];
+
+        foreach ($reflection->getMethods(\ReflectionMethod::IS_PUBLIC) as $method) {
+            $name = $method->getName();
+
+            if ($name === 'display' || !\in_array($name, $base, true)) {
+                $methods[] = self::asciiLower($name);
+            }
+        }
+
+        $map     = ['__default' => 'display'] + (array_combine($methods, $methods) ?: []);
+        $unsure  = [];
+        $all     = false;
+        $trusted = [];
+        $chain   = [];
+        $files   = [];
+
+        for ($r = $reflection; $r && $r->getName() !== BaseController::class; $r = $r->getParentClass() ?: null) {
+            array_unshift($chain, $r);
+        }
+
+        $addFiles = static function (\ReflectionClass $r) use (&$addFiles, &$files): void {
+            $file = $r->getFileName();
+
+            if (\is_string($file)) {
+                $files[$file] = true;
+            }
+
+            foreach ($r->getTraits() as $trait) {
+                $addFiles($trait);
+            }
+        };
+
+        foreach ($chain as $r) {
+            $addFiles($r);
+        }
+
+        foreach ($chain as $r) {
+            if (!$r->hasMethod('__construct')) {
+                continue;
+            }
+
+            $constructor = $r->getMethod('__construct');
+
+            if ($constructor->getDeclaringClass()->getName() !== $r->getName()) {
+                continue;
+            }
+
+            $file   = $constructor->getFileName();
+            $tokens = \is_string($file) && $file === $r->getFileName() ? self::fileTokens($file) : null;
+            $calls  = $tokens === null ? null : self::constructorTaskCalls($tokens, (int) $constructor->getStartLine(), (int) $constructor->getEndLine());
+
+            if ($calls === null) {
+                $all = true;
+
+                continue;
+            }
+
+            foreach ($calls['positions'] as $position) {
+                $trusted[$file . '#' . $position] = true;
+            }
+
+            foreach ($calls['calls'] as [$call, $first, $second]) {
+                if ($call === 'unregistertask') {
+                    unset($map[$first]);
+                } else {
+                    $task   = $call === 'registerdefaulttask' ? '__default' : $first;
+                    $target = $call === 'registerdefaulttask' ? $first : (string) $second;
+
+                    if (\in_array($target, $methods, true)) {
+                        $map[$task] = $target;
+                    }
+                }
+            }
+        }
+
+        foreach (array_keys($files) as $file) {
+            $tokens = self::fileTokens($file);
+
+            if ($tokens === null) {
+                $all = true;
+
+                continue;
+            }
+
+            foreach ($tokens as $i => $token) {
+                if (!\is_array($token)) {
+                    continue;
+                }
+
+                $text  = self::asciiLower($token[1]);
+                $next  = $tokens[$i + 1] ?? null;
+                $after = $tokens[$i + 2] ?? null;
+
+                if (\in_array($token[0], [T_CONSTANT_ENCAPSED_STRING, T_ENCAPSED_AND_WHITESPACE], true)) {
+                    if (preg_match('/registertask|unregistertask|registerdefaulttask|taskmap/', $text)) {
+                        $all = true;
+                    } elseif (str_contains($text, 'default_task')) {
+                        $unsure[] = '__default';
+                    }
+
+                    continue;
+                }
+
+                if ($token[0] === T_VARIABLE && $text === '$taskmap') {
+                    $all = true;
+
+                    continue;
+                }
+
+                // Dynamic method calls: ->$name(…), ->{…}(…).
+                if (\in_array($token[0], [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON], true)) {
+                    if ($next === '{' || (\is_array($next) && $next[0] === T_VARIABLE && $after === '(')) {
+                        $all = true;
+                    }
+
+                    continue;
+                }
+
+                if ($token[0] !== T_STRING) {
+                    continue;
+                }
+
+                if ($text === 'taskmap') {
+                    $all = true;
+
+                    continue;
+                }
+
+                if ($text === 'default_task') {
+                    $unsure[] = '__default';
+
+                    continue;
+                }
+
+                if ($next !== '(') {
+                    continue;
+                }
+
+                if (\in_array($text, ['call_user_func', 'call_user_func_array', 'forward_static_call', 'forward_static_call_array'], true)) {
+                    $all = true;
+
+                    continue;
+                }
+
+                if (!\in_array($text, self::TASK_CALLS, true) || isset($trusted[$file . '#' . $i])) {
+                    continue;
+                }
+
+                if ($text === 'registerdefaulttask') {
+                    $unsure[] = '__default';
+
+                    continue;
+                }
+
+                $first = self::taskNameToken($after, true);
+
+                if ($first === null) {
+                    $all = true;
+                } else {
+                    $unsure[] = $first;
+                }
+            }
+        }
+
+        return ['map' => $map, 'unsure' => array_values(array_unique($unsure)), 'all' => $all];
+    }
+
+    /**
+     * The task calls a constructor makes for certain (see readTaskMap()), in
+     * order, with the token positions of their method names. Null when the
+     * constructor can't be read, has no top-level `parent::__construct()`,
+     * or uses the alternative (endif) syntax.
+     *
+     * @param   array  $tokens     fileTokens() of the file.
+     * @param   int    $startLine  First line of the constructor.
+     * @param   int    $endLine    Last line of the constructor.
+     *
+     * @return  array{calls: list<array{0: string, 1: string, 2: ?string}>, positions: int[]}|null
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function constructorTaskCalls(array $tokens, int $startLine, int $endLine): ?array
+    {
+        $body = self::functionBody($tokens, '__construct', $startLine, $endLine);
+
+        if ($body === null) {
+            return null;
+        }
+
+        [$open, $close] = $body;
+
+        $calls     = [];
+        $positions = [];
+        $parent    = false;
+        $returned  = false;
+        $depth     = 0;
+        $parens    = 0;
+        $start     = $open + 1;
+
+        for ($i = $open + 1; $i < $close; $i++) {
+            $token = $tokens[$i];
+            $id    = \is_array($token) ? $token[0] : $token;
+
+            if (\in_array($id, [T_ENDIF, T_ENDWHILE, T_ENDFOR, T_ENDFOREACH, T_ENDSWITCH, T_ENDDECLARE], true)) {
+                return null;
+            }
+
+            if ($id === T_RETURN || $id === T_GOTO) {
+                $returned = true;
+            }
+
+            if ($id === '{' || $id === T_CURLY_OPEN || $id === T_DOLLAR_OPEN_CURLY_BRACES) {
+                $depth++;
+
+                continue;
+            }
+
+            if ($id === '}') {
+                $depth--;
+
+                // A block statement at the top level ends here, unless it goes on (else, catch…).
+                if ($depth === 0 && $parens === 0) {
+                    $next = $tokens[$i + 1] ?? null;
+
+                    if (!\is_array($next) || !\in_array($next[0], [T_ELSE, T_ELSEIF, T_CATCH, T_FINALLY, T_WHILE], true)) {
+                        $start = $i + 1;
+                    }
+                }
+
+                continue;
+            }
+
+            if ($id === '(' || $id === '[' || $id === T_ATTRIBUTE) {
+                $parens++;
+            } elseif ($id === ')' || $id === ']') {
+                $parens--;
+            }
+
+            if ($depth !== 0 || $parens !== 0 || $id !== ';') {
+                continue;
+            }
+
+            $statement = \array_slice($tokens, $start, $i - $start, true);
+            $start     = $i + 1;
+
+            if (self::isParentConstructCall($statement)) {
+                $parent = true;
+
+                continue;
+            }
+
+            if (!$parent || $returned) {
+                continue;
+            }
+
+            $chain = self::taskCallChain($statement);
+
+            if ($chain !== null) {
+                foreach ($chain as [$position, $call, $first, $second]) {
+                    $calls[]     = [$call, $first, $second];
+                    $positions[] = $position;
+                }
+            }
+        }
+
+        return $parent ? ['calls' => $calls, 'positions' => $positions] : null;
+    }
+
+    /**
+     * Is this statement exactly `parent::__construct(…)`?
+     *
+     * @param   array  $statement  Tokens, keyed by position.
+     *
+     * @return  boolean
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function isParentConstructCall(array $statement): bool
+    {
+        $t = array_values($statement);
+
+        return \count($t) >= 5
+            && \is_array($t[0]) && $t[0][0] === T_STRING && self::asciiLower($t[0][1]) === 'parent'
+            && \is_array($t[1]) && $t[1][0] === T_DOUBLE_COLON
+            && \is_array($t[2]) && $t[2][0] === T_STRING && self::asciiLower($t[2][1]) === '__construct'
+            && $t[3] === '(' && end($t) === ')';
+    }
+
+    /**
+     * A statement that is only `$this->registerTask('a', 'b')` (or
+     * unregisterTask('a'), registerDefaultTask('b')), possibly chained, with
+     * plain quoted names. Null for anything else.
+     *
+     * @param   array  $statement  Tokens, keyed by position.
+     *
+     * @return  list<array{0: int, 1: string, 2: string, 3: ?string}>|null  [position of the name, call, first, second]
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function taskCallChain(array $statement): ?array
+    {
+        $positions = array_keys($statement);
+        $t         = array_values($statement);
+        $count     = \count($t);
+
+        if ($count < 5 || !\is_array($t[0]) || $t[0][0] !== T_VARIABLE || $t[0][1] !== '$this') {
+            return null;
+        }
+
+        $calls = [];
+        $k     = 1;
+
+        while ($k < $count) {
+            if (!\is_array($t[$k]) || $t[$k][0] !== T_OBJECT_OPERATOR || !\is_array($t[$k + 1] ?? null) || $t[$k + 1][0] !== T_STRING || ($t[$k + 2] ?? null) !== '(') {
+                return null;
+            }
+
+            $call  = self::asciiLower($t[$k + 1][1]);
+            $first = self::taskNameToken($t[$k + 3] ?? null, $call !== 'registerdefaulttask');
+
+            if (!\in_array($call, self::TASK_CALLS, true) || $first === null) {
+                return null;
+            }
+
+            if ($call === 'registertask') {
+                $second = ($t[$k + 4] ?? null) === ',' ? self::taskNameToken($t[$k + 5] ?? null, false) : null;
+
+                if ($second === null || ($t[$k + 6] ?? null) !== ')') {
+                    return null;
+                }
+
+                $calls[] = [$positions[$k + 1], $call, $first, $second];
+                $k += 7;
+            } else {
+                if (($t[$k + 4] ?? null) !== ')') {
+                    return null;
+                }
+
+                $calls[] = [$positions[$k + 1], $call, $first, null];
+                $k += 5;
+            }
+        }
+
+        return $calls;
     }
 
     /**
      * A task or method name written as a plain quoted string in PHP source
      * ('notify' or "notify"), lower case; null for anything else.
      *
-     * @param   mixed  $token  A token_get_all() token.
+     * @param   mixed    $token  A token_get_all() token.
+     * @param   boolean  $task   A task name (may also hold "." and "-"), else a method name.
      *
      * @return  string|null
      *
      * @since   __DEPLOY_VERSION__
      */
-    private static function taskNameToken($token): ?string
+    private static function taskNameToken($token, bool $task): ?string
     {
         if (!\is_array($token) || $token[0] !== T_CONSTANT_ENCAPSED_STRING) {
             return null;
         }
 
-        return preg_match('/^([\'"])([A-Za-z0-9_]+)\1$/', $token[1], $m) ? self::asciiLower($m[2]) : null;
+        $pattern = $task ? '/^([\'"])([A-Za-z0-9_.\-]+)\1$/' : '/^([\'"])([A-Za-z0-9_]+)\1$/';
+
+        return preg_match($pattern, $token[1], $m) ? self::asciiLower($m[2]) : null;
+    }
+
+    /**
+     * Memoised fileTokens() results, keyed by file.
+     *
+     * @var    array<string, array|null>
+     * @since  __DEPLOY_VERSION__
+     */
+    private static array $fileTokens = [];
+
+    /**
+     * token_get_all() of a PHP file without whitespace and comments,
+     * memoised; null when it can't be read.
+     *
+     * @param   string  $file  File path.
+     *
+     * @return  array|null
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function fileTokens(string $file): ?array
+    {
+        if (\array_key_exists($file, self::$fileTokens)) {
+            return self::$fileTokens[$file];
+        }
+
+        $tokens = null;
+
+        try {
+            if (\function_exists('token_get_all') && is_file($file)) {
+                $code = file_get_contents($file);
+
+                if (\is_string($code)) {
+                    $tokens = [];
+
+                    foreach (token_get_all($code) as $token) {
+                        if (!\is_array($token) || !\in_array($token[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+                            $tokens[] = $token;
+                        }
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            $tokens = null;
+        }
+
+        return self::$fileTokens[$file] = $tokens;
+    }
+
+    /**
+     * The body of a function: the positions of its opening and closing
+     * braces, found by name between the lines reflection gives. Null when
+     * it can't be found (or has no body).
+     *
+     * @param   array   $tokens     fileTokens() of the file.
+     * @param   string  $name       Function name.
+     * @param   int     $startLine  First line.
+     * @param   int     $endLine    Last line.
+     *
+     * @return  array{0: int, 1: int}|null
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function functionBody(array $tokens, string $name, int $startLine, int $endLine): ?array
+    {
+        $name  = self::asciiLower($name);
+        $count = \count($tokens);
+
+        for ($i = 0; $i < $count; $i++) {
+            $token = $tokens[$i];
+
+            if (!\is_array($token) || $token[0] !== T_FUNCTION || $token[2] < $startLine || $token[2] > $endLine) {
+                continue;
+            }
+
+            $k = $i + 1;
+
+            if (($tokens[$k] ?? null) === '&') {
+                $k++;
+            }
+
+            if (!\is_array($tokens[$k] ?? null) || self::asciiLower($tokens[$k][1]) !== $name) {
+                continue;
+            }
+
+            // Skip the parameter list (default values may hold parentheses).
+            $parens = 0;
+
+            for ($k++; $k < $count; $k++) {
+                if ($tokens[$k] === '(') {
+                    $parens++;
+                } elseif ($tokens[$k] === ')') {
+                    $parens--;
+
+                    if ($parens === 0) {
+                        break;
+                    }
+                }
+            }
+
+            for ($k++; $k < $count && $tokens[$k] !== '{'; $k++) {
+                if ($tokens[$k] === ';') {
+                    return null;
+                }
+            }
+
+            $depth = 0;
+
+            for ($j = $k; $j < $count; $j++) {
+                $id = \is_array($tokens[$j]) ? $tokens[$j][0] : $tokens[$j];
+
+                if ($id === '{' || $id === T_CURLY_OPEN || $id === T_DOLLAR_OPEN_CURLY_BRACES) {
+                    $depth++;
+                } elseif ($id === '}') {
+                    $depth--;
+
+                    if ($depth === 0) {
+                        return [$k, $j];
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        return null;
+    }
+
+    /**
+     * Memoised liveTaskMap() results, keyed "class|task".
+     *
+     * @var    array<string, array<string, string>|null>
+     * @since  __DEPLOY_VERSION__
+     */
+    private static array $liveTaskMaps = [];
+
+    /**
+     * The real task map of the controller, for a task its source leaves
+     * unsure: the controller is built through the component's MVC factory
+     * the way ComponentDispatcher will build it for this request (same
+     * input, with `controller` and `task` split as the dispatcher splits
+     * them), then its taskMap is read. It is given its own copy of the
+     * input, its base path is set (JPATH_COMPONENT isn't defined yet when
+     * this runs), and anything it prints is thrown away. Null when it can't
+     * be built or read: the request is then a page of unknown view.
+     *
+     * @param   CMSApplicationInterface  $app     The application.
+     * @param   string                   $option  Component, lower case.
+     * @param   string                   $class   Controller class.
+     * @param   string                   $name    Controller name from the request ('' for the DisplayController).
+     * @param   string                   $task    Task, lower case.
+     *
+     * @return  array<string, string>|null  Lower-case task => lower-case method.
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function liveTaskMap(CMSApplicationInterface $app, string $option, string $class, string $name, string $task): ?array
+    {
+        $key = $class . '|' . $task;
+
+        if (\array_key_exists($key, self::$liveTaskMaps)) {
+            return self::$liveTaskMaps[$key];
+        }
+
+        $map   = null;
+        $level = ob_get_level();
+
+        try {
+            $factory = self::$factories[$option] ?? null;
+            $input   = $app->getInput();
+
+            if ($factory instanceof MVCFactory && $input instanceof Input && \defined('JPATH_SITE')) {
+                $data      = (new \ReflectionProperty(Input::class, 'data'))->getValue($input);
+                $inputType = \get_class($input);
+                $copy      = new $inputType(\is_array($data) ? $data : []);
+                $config    = ['option' => $option, 'base_path' => JPATH_SITE . '/components/' . $option];
+
+                $copy->set('task', $task);
+
+                if ($name !== '') {
+                    $copy->set('controller', $name);
+                    $config['name'] = $name;
+                }
+
+                ob_start();
+
+                $controller = $factory->createController($name !== '' ? $name : 'display', 'Site', $config, $app, $copy);
+
+                if ($controller instanceof BaseController && \get_class($controller) === $class) {
+                    $taskMap = (new \ReflectionProperty(BaseController::class, 'taskMap'))->getValue($controller);
+
+                    if (\is_array($taskMap)) {
+                        $map = [];
+
+                        foreach ($taskMap as $alias => $method) {
+                            if (\is_string($method)) {
+                                $map[self::asciiLower((string) $alias)] = self::asciiLower($method);
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            $map = null;
+        } finally {
+            while (ob_get_level() > $level) {
+                ob_end_clean();
+            }
+        }
+
+        return self::$liveTaskMaps[$key] = $map;
+    }
+
+    /**
+     * Memoised methodRendering() results, keyed "class::method".
+     *
+     * @var    array<string, string|null>
+     * @since  __DEPLOY_VERSION__
+     */
+    private static array $renderings = [];
+
+    /**
+     * Does this controller method show a page, and which view? Read from its
+     * source (and from the controller's own methods it calls, a few levels
+     * deep), never run:
+     *
+     * - null: it shows no page (no display(), getView(), createView() or
+     *   new …View): a real task, such as a form submit, a redirect, a
+     *   payment callback or a JSON answer;
+     * - a view name: it sets `view` to a plain quoted name
+     *   (`$this->input->set('view', 'member')`) as a statement of its own at
+     *   the top of the method, before it calls `$this->display()` (or
+     *   parent::/self::/static::display()), and sets no other view;
+     * - '': it calls display() without changing the view, so the request's
+     *   view is shown;
+     * - UNKNOWN_VIEW: anything else that shows a page (a view object's
+     *   display(), getView(), new …View, a conditional or non-literal view,
+     *   or one of these in a method it calls).
+     *
+     * @param   string   $class   Controller class.
+     * @param   string   $method  Method name.
+     * @param   int      $depth   Recursion depth.
+     * @param   array    $seen    Methods already followed.
+     *
+     * @return  string|null
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function methodRendering(string $class, string $method, int $depth = 0, array &$seen = []): ?string
+    {
+        $memo = $class . '::' . self::asciiLower($method);
+
+        if ($depth === 0 && \array_key_exists($memo, self::$renderings)) {
+            return self::$renderings[$memo];
+        }
+
+        try {
+            $result = self::readMethodRendering($class, $method, $depth, $seen);
+        } catch (\Throwable $e) {
+            $result = self::UNKNOWN_VIEW;
+        }
+
+        if ($depth === 0) {
+            self::$renderings[$memo] = $result;
+        }
+
+        return $result;
+    }
+
+    /**
+     * methodRendering() without the memo.
+     *
+     * @param   string   $class   Controller class.
+     * @param   string   $method  Method name.
+     * @param   int      $depth   Recursion depth.
+     * @param   array    $seen    Methods already followed.
+     *
+     * @return  string|null
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function readMethodRendering(string $class, string $method, int $depth, array &$seen): ?string
+    {
+        $reflection = new \ReflectionMethod($class, $method);
+        $declaring  = $reflection->getDeclaringClass();
+
+        if ($declaring->getName() === BaseController::class) {
+            // BaseController's display() shows the request's view; its other
+            // methods (setRedirect(), getModel(), checkToken()…) render
+            // nothing. getView() and createView() count where they're called.
+            return self::asciiLower($reflection->getName()) === 'display' ? '' : null;
+        }
+
+        $seen[$declaring->getName() . '::' . self::asciiLower($method)] = true;
+
+        $file   = $reflection->getFileName();
+        $tokens = \is_string($file) ? self::fileTokens($file) : null;
+        $body   = $tokens === null ? null : self::functionBody($tokens, $reflection->getName(), (int) $reflection->getStartLine(), (int) $reflection->getEndLine());
+
+        if ($body === null) {
+            return self::UNKNOWN_VIEW;
+        }
+
+        [$open, $close] = $body;
+
+        $direct      = null;
+        $other       = false;
+        $viewUnknown = false;
+        $views       = [];
+        $calls       = [];
+        $depthInBody = 0;
+
+        for ($i = $open + 1; $i < $close; $i++) {
+            $token = $tokens[$i];
+            $id    = \is_array($token) ? $token[0] : $token;
+
+            if ($id === '{' || $id === T_CURLY_OPEN || $id === T_DOLLAR_OPEN_CURLY_BRACES) {
+                $depthInBody++;
+
+                continue;
+            }
+
+            if ($id === '}') {
+                $depthInBody--;
+
+                continue;
+            }
+
+            // new SomethingView(…)
+            if ($id === T_NEW) {
+                $next = $tokens[$i + 1] ?? null;
+
+                if (\is_array($next) && preg_match('/view$/i', (string) $next[1])) {
+                    $other = true;
+                }
+
+                continue;
+            }
+
+            // $this->default_view = …, $this->name = …: display() would pick another view.
+            if ($id === T_VARIABLE && $token[1] === '$this' && \is_array($tokens[$i + 1] ?? null) && $tokens[$i + 1][0] === T_OBJECT_OPERATOR) {
+                $property = $tokens[$i + 2] ?? null;
+
+                if (\is_array($property) && \in_array(self::asciiLower($property[1]), ['default_view', 'name'], true) && ($tokens[$i + 3] ?? null) === '=') {
+                    $viewUnknown = true;
+                }
+
+                continue;
+            }
+
+            if ($id !== T_STRING || ($tokens[$i + 1] ?? null) !== '(') {
+                continue;
+            }
+
+            $name     = self::asciiLower($token[1]);
+            $operator = $tokens[$i - 1] ?? null;
+            $subject  = $tokens[$i - 2] ?? null;
+            $arrow    = \is_array($operator) && \in_array($operator[0], [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR], true);
+            $static   = \is_array($operator) && $operator[0] === T_DOUBLE_COLON;
+            $onThis   = $arrow && \is_array($subject) && $subject[0] === T_VARIABLE && $subject[1] === '$this';
+            $scope    = $static && \is_array($subject) && $subject[0] === T_STRING ? self::asciiLower($subject[1]) : '';
+            $own      = $onThis || \in_array($scope, ['parent', 'self', 'static'], true);
+
+            // ->set('view', …) / ->def('view', …) on any input.
+            if ($arrow && \in_array($name, ['set', 'def'], true)) {
+                $key = $tokens[$i + 2] ?? null;
+
+                if (!\is_array($key) || $key[0] !== T_CONSTANT_ENCAPSED_STRING) {
+                    $viewUnknown = true;
+                } elseif (trim($key[1], '\'"') === 'view') {
+                    $value = ($tokens[$i + 3] ?? null) === ',' ? self::taskNameToken($tokens[$i + 4] ?? null, false) : null;
+
+                    if ($name === 'set' && $value !== null && ($tokens[$i + 5] ?? null) === ')') {
+                        // A top-level statement of its own: `$x->…->set('view', 'name');`
+                        $topLevel = $depthInBody === 0 && ($tokens[$i + 6] ?? null) === ';' && self::startsStatement($tokens, $i, $open);
+                        $views[]  = [$value, $topLevel, $i];
+                    } else {
+                        $viewUnknown = true;
+                    }
+                }
+
+                continue;
+            }
+
+            if (\in_array($name, self::RENDER_CALLS, true)) {
+                if ($name === 'display' && $own) {
+                    $direct ??= $i;
+                } else {
+                    $other = true;
+                }
+
+                continue;
+            }
+
+            if (!$own || $depth >= 4) {
+                continue;
+            }
+
+            // $this-> and static:: reach the request's controller class,
+            // self:: this class, parent:: its parent.
+            $owner = match ($scope) {
+                'parent' => $declaring->getParentClass() ? $declaring->getParentClass()->getName() : null,
+                'self'   => $declaring->getName(),
+                default  => $class,
+            };
+
+            // A private method is the one of the class whose code calls it.
+            if ($scope !== 'parent' && $declaring->hasMethod($name)) {
+                $local = $declaring->getMethod($name);
+
+                if ($local->isPrivate() && $local->getDeclaringClass()->getName() === $declaring->getName()) {
+                    $owner = $declaring->getName();
+                }
+            }
+
+            if ($owner === null) {
+                $other = true;
+
+                continue;
+            }
+
+            $calls[] = [$owner, $name];
+        }
+
+        foreach ($calls as [$owner, $name]) {
+            if (!(new \ReflectionClass($owner))->hasMethod($name)) {
+                // A magic or missing method: can't tell what it does.
+                $other = true;
+
+                continue;
+            }
+
+            $followed = (new \ReflectionMethod($owner, $name))->getDeclaringClass()->getName() . '::' . $name;
+
+            if (isset($seen[$followed])) {
+                continue;
+            }
+
+            if (self::methodRendering($owner, $name, $depth + 1, $seen) !== null) {
+                $other = true;
+            }
+        }
+
+        if ($direct === null && !$other) {
+            return null;
+        }
+
+        if ($other || $viewUnknown) {
+            return self::UNKNOWN_VIEW;
+        }
+
+        if ($views === []) {
+            return '';
+        }
+
+        $names = array_values(array_unique(array_column($views, 0)));
+
+        foreach ($views as [$value, $topLevel, $position]) {
+            if (\count($names) === 1 && $topLevel && $position < $direct) {
+                return self::normaliseName($value) ?: self::UNKNOWN_VIEW;
+            }
+        }
+
+        return self::UNKNOWN_VIEW;
+    }
+
+    /**
+     * Is the call at $position part of a plain chain (`$this->input->set(`,
+     * `$input->set(`, `$this->app->getInput()->set(`) that starts a
+     * statement of its own (not after if, else, while, a label…)?
+     *
+     * @param   array  $tokens    fileTokens() of the file.
+     * @param   int    $position  Position of the method name.
+     * @param   int    $open      Position of the function body's opening brace.
+     *
+     * @return  boolean
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function startsStatement(array $tokens, int $position, int $open): bool
+    {
+        for ($k = $position - 1; $k > $open; $k--) {
+            $token = $tokens[$k];
+
+            if (\in_array($token, [';', '{', '}'], true)) {
+                break;
+            }
+
+            if (\in_array($token, ['(', ')'], true)) {
+                continue;
+            }
+
+            if (!\is_array($token) || !\in_array($token[0], [T_VARIABLE, T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_STRING, T_DOUBLE_COLON], true)) {
+                return false;
+            }
+        }
+
+        $first = $tokens[$k + 1] ?? null;
+
+        return \is_array($first) && $first[0] === T_VARIABLE;
     }
 
     /**
@@ -1167,13 +2447,95 @@ final class ProtectionHelper
     }
 
     /**
-     * Is the request exactly the page of the menu item it was opened under
-     * (same component, view and id as the item's own link)? Only then does
-     * that menu item vouch for the request. Any menu item id can be added to
-     * any URL, and Joomla puts links it can't place under the home item.
+     * The menu item the router resolved from the request itself: the active
+     * item when the request names its Itemid (query string or form field)
+     * or its SEF path starts with that item's path. 0 otherwise, including
+     * when the router fell back to the home page (an unrouted URL).
      *
-     * @param   CMSApplicationInterface                      $app      The application.
-     * @param   array{option: string, view: ?string, id: int}  $request  From describeRequest().
+     * @param   CMSApplicationInterface  $app  The application.
+     *
+     * @return  integer
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function getRoutedItemId(CMSApplicationInterface $app): int
+    {
+        if (!method_exists($app, 'getMenu')) {
+            return 0;
+        }
+
+        $active = $app->getMenu()->getActive();
+        $id     = $active ? (int) $active->id : 0;
+
+        if ($id <= 0) {
+            return 0;
+        }
+
+        $input = $app->getInput();
+
+        foreach (['get', 'post'] as $source) {
+            $raw = $input->$source->get('Itemid', null, 'raw');
+
+            if (\is_scalar($raw) && preg_match('/^\s*\d+\s*$/', (string) $raw) && (int) $raw === $id) {
+                return $id;
+            }
+        }
+
+        $route = trim((string) ($active->route ?? ''), '/');
+
+        if ($route === '') {
+            return 0;
+        }
+
+        try {
+            // The path the router parsed: no base path, no index.php, no suffix.
+            $path = urldecode(Uri::getInstance()->getPath());
+            $base = Uri::base(true);
+
+            if ($base !== '' && str_starts_with($path, $base)) {
+                $path = substr($path, \strlen($base));
+            }
+
+            $path = trim($path, '/');
+
+            if (str_starts_with($path, 'index.php')) {
+                $path = trim(substr($path, 9), '/');
+            }
+
+            $path       = (string) preg_replace('/\.[A-Za-z0-9]{1,5}$/', '', $path);
+            $candidates = [$path];
+            $first      = explode('/', $path, 2);
+
+            if (\count($first) === 2) {
+                foreach (LanguageHelper::getLanguages() as $language) {
+                    if (isset($language->sef) && (string) $language->sef === $first[0]) {
+                        $candidates[] = $first[1];
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            return 0;
+        }
+
+        foreach ($candidates as $candidate) {
+            if (str_starts_with($candidate . '/', $route . '/')) {
+                return $id;
+            }
+        }
+
+        return 0;
+    }
+
+    /**
+     * Is the request exactly the page of the menu item it was opened under
+     * (same component and view as the item's own link, the same id, and no
+     * other record key the link doesn't have or holds another value for)?
+     * Only then does that menu item vouch for the request. Any menu item id
+     * can be added to any URL, and Joomla puts links it can't place under
+     * the home item.
+     *
+     * @param   CMSApplicationInterface  $app      The application.
+     * @param   array                    $request  From describeRequest().
      *
      * @return  boolean
      *
@@ -1181,27 +2543,45 @@ final class ProtectionHelper
      */
     private static function isActiveItemsOwnPage(CMSApplicationInterface $app, array $request): bool
     {
-        $active = $request['view'] === null ? null : self::getActiveItem($app);
+        if ($request['view'] === null || $request['view'] === self::UNKNOWN_VIEW) {
+            return false;
+        }
+
+        $active = self::getActiveItem($app);
 
         if ($active === null) {
             return false;
         }
 
-        $query = (array) ($active->query ?? []);
+        $query  = (array) ($active->query ?? []);
+        $option = $request['option'];
 
-        if (self::asciiLower(self::queryString($query, 'option')) !== $request['option']) {
+        if (self::asciiLower(self::queryString($query, 'option')) !== $option) {
             return false;
         }
 
         $view = self::resolveView(
             $app,
-            $request['option'],
+            $option,
             self::queryString($query, 'view'),
             self::queryString($query, 'task'),
             self::queryString($query, 'controller')
         );
 
-        return $view === $request['view'] && self::queryId($query) === $request['id'];
+        if ($view !== $request['view'] || !self::sameIds(self::linkIds($option, $query), self::requestIds($request))) {
+            return false;
+        }
+
+        $linkKeys    = self::recordKeys($option, $query);
+        $requestKeys = (array) ($request['keys'] ?? []);
+
+        foreach (array_unique(array_merge(array_keys($linkKeys), array_keys($requestKeys))) as $key) {
+            if (!self::sameValue((string) $key, $linkKeys[$key] ?? null, $requestKeys[$key] ?? null)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -1247,9 +2627,9 @@ final class ProtectionHelper
     /**
      * Is the request for one of the "Also protect these views" views?
      *
-     * @param   CMSApplicationInterface                      $app      The application.
-     * @param   array{option: string, view: ?string, id: int}  $request  From describeRequest().
-     * @param   string[]                                       $views    From getProtectedViews().
+     * @param   CMSApplicationInterface  $app      The application.
+     * @param   array                    $request  From describeRequest().
+     * @param   string[]                 $views    From getProtectedViews().
      *
      * @return  boolean
      *
@@ -1261,12 +2641,13 @@ final class ProtectionHelper
             return false;
         }
 
-        if ($request['view'] !== '') {
+        if ($request['view'] !== '' && $request['view'] !== self::UNKNOWN_VIEW) {
             return \in_array($request['option'] . ':' . $request['view'], $views, true);
         }
 
-        // The component's default view: it can't be named, so it counts as
-        // any listed view of that component unless it's the menu item's own page.
+        // The component's default view (or a view that can't be told): it
+        // counts as any listed view of that component unless it's the menu
+        // item's own page.
         foreach ($views as $entry) {
             if (str_starts_with($entry, $request['option'] . ':')) {
                 return !self::isActiveItemsOwnPage($app, $request);
@@ -1640,11 +3021,19 @@ final class ProtectionHelper
 
     /**
      * "Every page except…" mode: is this request one of the excluded pages?
-     * True only when the request's option / view / id / layout match an
-     * excluded menu item's own link, or (com_content) the request is an
-     * article or subcategory inside an excluded category. The view is the one
-     * Joomla will show (resolveView()), so `task=article.display` is matched
-     * like `view=article`.
+     *
+     * - A page: true only when the view Joomla will show (resolveView()), the
+     *   id (com_tags: the list of tags), the layout and any other record key
+     *   match an excluded menu item's own link, or (com_content) the request
+     *   is an article or subcategory inside an excluded category. So
+     *   `task=article.display` is matched like `view=article`.
+     * - A real task (a login or contact form submit, a payment callback): it
+     *   shows no page of its own, so it is excluded only when it was sent to
+     *   an excluded page: the menu item the router resolved from the
+     *   request's own Itemid or SEF path (not its fallback to the home page)
+     *   is excluded, and the view and id the router filled in are still that
+     *   item's. A `view` or `id` added to the request can only narrow this,
+     *   never exclude a request by itself.
      *
      * @param   CMSApplicationInterface  $app       The application.
      * @param   int[]                    $excluded  Excluded menu item ids.
@@ -1662,18 +3051,31 @@ final class ProtectionHelper
             return false;
         }
 
-        // A real task (a login or contact form submit, a payment callback)
-        // has no page view of its own: it's matched by the raw `view`, which
-        // the router fills in from the page it was sent to, so a form sent
-        // from an excluded page stays excluded.
         $input   = $app->getInput();
-        $details = self::describeRequest($app, $option);
-        $request = [
-            'view'   => $details['view'] ?? self::normaliseName((string) self::singleValue($input, 'view')),
-            'id'     => $details['id'],
-            'layout' => (string) self::singleValue($input, 'layout'),
-        ];
-        $menu       = $app->getMenu();
+        $request = self::describeRequest($app, $option);
+        $layout  = (string) self::singleValue($input, 'layout');
+        $menu    = $app->getMenu();
+
+        if ($request['view'] === null) {
+            $routed = self::getRoutedItemId($app);
+
+            if ($routed <= 0 || !\in_array($routed, $excluded, true)) {
+                return false;
+            }
+
+            $item  = $menu->getItem($routed);
+            $query = $item ? (array) ($item->query ?? []) : [];
+
+            return $item
+                && self::normaliseName(self::queryString($query, 'view')) === self::normaliseName((string) self::singleValue($input, 'view'))
+                && self::sameIds(self::linkIds($option, $query), self::requestIds($request))
+                && \in_array(self::queryString($query, 'layout'), ['', $layout], true);
+        }
+
+        if ($request['view'] === self::UNKNOWN_VIEW) {
+            return false;
+        }
+
         $categories = [];
 
         foreach ($excluded as $menuItemId) {
@@ -1688,7 +3090,12 @@ final class ProtectionHelper
             $itemId     = self::queryId($query);
             $itemLayout = self::queryString($query, 'layout');
 
-            if ($itemView === $request['view'] && $itemId === $request['id'] && ($itemLayout === '' || $itemLayout === $request['layout'])) {
+            if (
+                $itemView === $request['view']
+                && self::sameIds(self::linkIds($option, $query), self::requestIds($request))
+                && ($itemLayout === '' || $itemLayout === $layout)
+                && self::sameRecordKeys(self::recordKeys($option, $query), $request['keys'])
+            ) {
                 return true;
             }
 
@@ -1705,15 +3112,44 @@ final class ProtectionHelper
     }
 
     /**
+     * Do a link's and a request's record keys (other than `id`) certainly
+     * name the same record: the same keys, each with the same value?
+     *
+     * @param   array<string, mixed>  $link     From recordKeys().
+     * @param   array<string, mixed>  $request  From describeRequest().
+     *
+     * @return  boolean
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function sameRecordKeys(array $link, array $request): bool
+    {
+        foreach (array_unique(array_merge(array_keys($link), array_keys($request))) as $key) {
+            if (!self::sameValue((string) $key, $link[$key] ?? null, $request[$key] ?? null)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
      * Catch requests for protected content reached through a different (or
      * forged) Itemid, or none. The view is the one Joomla will show
      * (resolveView()), so `task=contact.display` or `controller=contact` is
-     * matched like `view=contact`; a request that runs another task (form
-     * submit, payment callback, AJAX) never matches.
+     * matched like `view=contact`, and so is a task method that shows a page
+     * itself; a request that runs another task (form submit, payment
+     * callback, AJAX) never matches.
      *
-     * - same component + view + id as a protected menu item; a protected item
-     *   whose link has no id (a list) covers its view whatever the id, unless
-     *   the request is exactly another menu item's own page with that id;
+     * - same component + view + id as a protected menu item (com_tags: any
+     *   of the request's tags is the protected item's); in other
+     *   (third-party) components also when the request picks the record by
+     *   another key (user_id, slug…) that could be the protected item's;
+     * - a protected item whose link has no id covers its view whatever the
+     *   id: a list covers every record, unless the request is exactly
+     *   another menu item's own page; one record picked by another key
+     *   (user_id=5) covers the view unless the request is exactly another
+     *   menu item's own page that is clearly another record;
      * - an article / contact / news feed (or a subcategory) inside a protected
      *   category of com_content, com_contact or com_newsfeeds, and the
      *   featured-contacts and contact category lists when they'd show a
@@ -1721,12 +3157,16 @@ final class ProtectionHelper
      * - any other component: the detail view of a protected list (a protected
      *   "members" list covers "member"), unless the request is exactly the
      *   page of the menu item it was opened under (issue #16);
-     * - the component's default view (no view named): any component with a
-     *   protected menu item, unless it is exactly that menu item's page.
+     * - the component's default view (no view named), or a view that can't
+     *   be told: any component with a protected menu item, unless it is
+     *   exactly that menu item's page (never for a view that can't be told).
      *
-     * @param   CMSApplicationInterface                        $app         The application.
-     * @param   int[]                                          $configured  Protected menu item ids.
-     * @param   array{option: string, view: ?string, id: int}  $request     From describeRequest().
+     * "Exactly the page" means the same view, id and other record keys
+     * (isActiveItemsOwnPage()).
+     *
+     * @param   CMSApplicationInterface  $app         The application.
+     * @param   int[]                    $configured  Protected menu item ids.
+     * @param   array                    $request     From describeRequest().
      *
      * @return  boolean
      *
@@ -1746,7 +3186,14 @@ final class ProtectionHelper
         $protectedContacts   = [];
         $detailViews         = [];
         $sameComponent       = false;
-        $ownPage             = null;
+        $unknown             = $view === '' || $view === self::UNKNOWN_VIEW;
+        $requestIds          = self::requestIds($request);
+        $requestKeys         = (array) ($request['keys'] ?? []);
+        $namesRecord         = $requestIds !== [] || $requestKeys !== [];
+        $ownPageMemo         = null;
+        $ownPage             = static function () use ($app, $request, &$ownPageMemo): bool {
+            return $ownPageMemo ??= self::isActiveItemsOwnPage($app, $request);
+        };
 
         foreach ($configured as $menuItemId) {
             $item  = $menu->getItem($menuItemId);
@@ -1760,17 +3207,31 @@ final class ProtectionHelper
             $itemView      = self::normaliseName(self::queryString($query, 'view'));
             $itemId        = self::queryId($query);
 
-            if ($view !== '' && $itemView === $view && $itemId === $id) {
-                return true;
-            }
+            if (!$unknown && $itemView === $view) {
+                $linkIds  = self::linkIds($option, $query);
+                $linkKeys = self::recordKeys($option, $query);
 
-            // A protected list without an id covers its view whatever id the
-            // request adds, except exactly another menu item's own page (a
-            // public, filtered copy of the list such as view=members&id=3).
-            if ($view !== '' && $itemView === $view && $itemId === 0) {
-                $ownPage ??= $id !== 0 && self::isActiveItemsOwnPage($app, $request);
+                if ($linkIds !== []) {
+                    // The protected record itself.
+                    if (array_intersect($linkIds, $requestIds) !== []) {
+                        return true;
+                    }
 
-                if (!$ownPage) {
+                    // Another key in the request could pick this record.
+                    if (self::keysMaySelect($linkKeys, $requestKeys) && !$ownPage()) {
+                        return true;
+                    }
+                } elseif ($linkKeys !== []) {
+                    // One record picked by another key: the view is covered,
+                    // except another menu item's own page for another record.
+                    if (!($ownPage() && self::keysDiffer($linkKeys, $requestKeys))) {
+                        return true;
+                    }
+                } elseif (!($namesRecord && $ownPage())) {
+                    // A list without an id covers its view whatever record
+                    // the request adds, except exactly another menu item's
+                    // own page (a public, filtered copy of the list such as
+                    // view=members&id=3).
                     return true;
                 }
             }
@@ -1790,8 +3251,8 @@ final class ProtectionHelper
             return false;
         }
 
-        if ($view === '') {
-            return !self::isActiveItemsOwnPage($app, $request);
+        if ($unknown) {
+            return !$ownPage();
         }
 
         if ($categoryComponent !== null) {
@@ -1819,7 +3280,53 @@ final class ProtectionHelper
             return false;
         }
 
-        return !self::isActiveItemsOwnPage($app, $request);
+        return !$ownPage();
+    }
+
+    /**
+     * Could the request pick a protected record by a key other than `id`:
+     * a record key the link doesn't have, or one whose value could be the
+     * link's?
+     *
+     * @param   array<string, mixed>  $link     The protected link's record keys.
+     * @param   array<string, mixed>  $request  The request's record keys.
+     *
+     * @return  boolean
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function keysMaySelect(array $link, array $request): bool
+    {
+        foreach ($request as $key => $value) {
+            if (!\array_key_exists($key, $link) || self::mayBeSame((string) $key, $link[$key], $value)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Does the request certainly name another record than the link: one of
+     * the link's record keys has a value in the request that can't be the
+     * link's?
+     *
+     * @param   array<string, mixed>  $link     The protected link's record keys.
+     * @param   array<string, mixed>  $request  The request's record keys.
+     *
+     * @return  boolean
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function keysDiffer(array $link, array $request): bool
+    {
+        foreach ($link as $key => $value) {
+            if (\array_key_exists($key, $request) && !self::mayBeSame((string) $key, $value, $request[$key])) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

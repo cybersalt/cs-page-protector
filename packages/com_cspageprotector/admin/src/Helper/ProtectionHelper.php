@@ -516,8 +516,8 @@ final class ProtectionHelper
 
     /**
      * Protected menu item ids ("selected" mode): the ones picked in Options
-     * plus their language associations, so the French copy of a protected
-     * page is protected too.
+     * plus their language copies and Menu Item Aliases (see
+     * withRelatedItems()).
      *
      * @param   Registry  $params  Component params.
      *
@@ -527,7 +527,25 @@ final class ProtectionHelper
      */
     public static function getProtectedMenuItemIds(Registry $params): array
     {
-        $ids = self::getMenuItemIds($params);
+        return self::withRelatedItems(self::getMenuItemIds($params));
+    }
+
+    /**
+     * Menu item ids plus the items that show the same page under another id:
+     * their language associations (the French copy of a page), and published
+     * Menu Item Alias items that point at any of them (Joomla shows the
+     * target's page under the alias's own id when the alias doesn't
+     * redirect). Used for protected items and, in "every page except" mode,
+     * for the excluded ones.
+     *
+     * @param   int[]  $ids  Menu item ids.
+     *
+     * @return  int[]
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    public static function withRelatedItems(array $ids): array
+    {
         $key = implode(',', $ids);
 
         if ($ids === [] || isset(self::$associationMemo[$key])) {
@@ -554,11 +572,32 @@ final class ProtectionHelper
             // No associations table or no database: the picked items still count.
         }
 
+        try {
+            $db    = Factory::getContainer()->get(DatabaseInterface::class);
+            $query = $db->createQuery()
+                ->select($db->quoteName(['id', 'params']))
+                ->from($db->quoteName('#__menu'))
+                ->where($db->quoteName('type') . ' = ' . $db->quote('alias'))
+                ->where($db->quoteName('client_id') . ' = 0')
+                ->where($db->quoteName('published') . ' = 1');
+
+            foreach ($db->setQuery($query)->loadObjectList() ?: [] as $alias) {
+                $aliasParams = json_decode((string) $alias->params, true);
+                $target      = \is_array($aliasParams) && \is_scalar($aliasParams['aliasoptions'] ?? null) ? (int) $aliasParams['aliasoptions'] : 0;
+
+                if ($target > 0 && \in_array($target, $all, true)) {
+                    $all[] = (int) $alias->id;
+                }
+            }
+        } catch (\Throwable $e) {
+            // Can't read the aliases: the picked items and their copies still count.
+        }
+
         return self::$associationMemo[$key] = array_values(array_unique(array_filter($all, static fn (int $id): bool => $id > 0)));
     }
 
     /**
-     * Memoised getProtectedMenuItemIds() results, keyed by the picked ids.
+     * Memoised withRelatedItems() results, keyed by the given ids.
      *
      * @var    array<string, int[]>
      * @since  __DEPLOY_VERSION__
@@ -653,7 +692,9 @@ final class ProtectionHelper
             // A matching Itemid alone isn't enough: Joomla falls back to the
             // default menu item for unrouted URLs, and an Itemid can be bolted
             // onto any URL, so excluding Home must not open every article.
-            return !self::isExcludedRequest($app, $configured, (string) $option);
+            // Language copies of an excluded page are excluded too, the same
+            // way they're protected in "selected" mode.
+            return !self::isExcludedRequest($app, self::withRelatedItems($configured), (string) $option);
         }
 
         $protected = self::getProtectedMenuItemIds($params);
@@ -757,10 +798,12 @@ final class ProtectionHelper
      * The result is null when the request runs a real task that isn't
      * display() (a form submit, a payment callback, an AJAX call), so the
      * view rules never touch those. It is '' when the page is the
-     * component's own default view, or a component whose controllers can't
-     * be read (older, non-namespaced components): the rules then treat the
-     * request as any view of that component, unless it is exactly the page
-     * of the menu item it was opened under.
+     * component's own default view, when a named controller has its own
+     * display() (it may show any view, whatever `view` says), or for a
+     * component whose controllers can't be read (older, non-namespaced
+     * components): the rules then treat the request as any view of that
+     * component, unless it is exactly the page of the menu item it was
+     * opened under.
      *
      * @param   CMSApplicationInterface  $app         The application.
      * @param   string                   $option      Component, lower case.
@@ -790,13 +833,25 @@ final class ProtectionHelper
 
         $method     = self::asciiLower($method);
         $controller = self::normaliseName($controller);
-        $class      = $method === 'display' && $view !== '' ? null : self::controllerClass($app, $option, $named ? $controller : 'display');
+
+        // A controller other than the component's DisplayController, named in
+        // the request (`task=profile.display`, `controller=profile`).
+        $custom = $named && $controller !== 'display';
+        $class  = $method === 'display' && $view !== '' && !$custom ? null : self::controllerClass($app, $option, $named ? $controller : 'display');
 
         // A real task of the controller runs instead of display(), whatever
         // `view` says (the router fills `view` in from the menu item, so a
         // form submit or a payment callback often carries one).
         if ($class !== null && $method !== 'display' && \in_array($method, self::controllerTasks($class), true)) {
             return null;
+        }
+
+        // A named controller with its own display() can show any view, not
+        // the one the request names: unknown, so the rules fail closed. A
+        // DisplayController's own display() keeps the request's view (core
+        // components all have one, and they show `view`).
+        if ($custom && $class !== null && self::hasOwnDisplay($class)) {
+            return '';
         }
 
         if ($view !== '') {
@@ -809,15 +864,14 @@ final class ProtectionHelper
             return $method === 'display' || $method === '' ? '' : null;
         }
 
-        try {
-            $display  = new \ReflectionMethod($class, 'display');
-            $defaults = (new \ReflectionClass($class))->getDefaultProperties();
-        } catch (\ReflectionException $e) {
+        // A controller with its own display() picks the view itself.
+        if (self::hasOwnDisplay($class)) {
             return '';
         }
 
-        // A controller with its own display() picks the view itself.
-        if ($display->getDeclaringClass()->getName() !== BaseController::class) {
+        try {
+            $defaults = (new \ReflectionClass($class))->getDefaultProperties();
+        } catch (\ReflectionException $e) {
             return '';
         }
 
@@ -891,9 +945,39 @@ final class ProtectionHelper
     }
 
     /**
+     * Does this controller declare its own display() (or one of its parents
+     * other than BaseController does)? Unreadable counts as yes.
+     *
+     * @param   string  $class  Controller class.
+     *
+     * @return  boolean
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function hasOwnDisplay(string $class): bool
+    {
+        try {
+            return (new \ReflectionMethod($class, 'display'))->getDeclaringClass()->getName() !== BaseController::class;
+        } catch (\ReflectionException $e) {
+            return true;
+        }
+    }
+
+    /**
+     * BaseController's own methods, every visibility, the way its constructor
+     * sees them when it registers tasks (get_class_methods() called from
+     * inside the class).
+     *
+     * @var    string[]|null
+     * @since  __DEPLOY_VERSION__
+     */
+    private static ?array $baseControllerMethods = null;
+
+    /**
      * The tasks a controller answers (lower case), the way BaseController
-     * registers them: its public methods, minus BaseController's own except
-     * display().
+     * registers them: its public methods, minus BaseController's own (of any
+     * visibility) except display(). Task aliases (registerTask()) aren't
+     * methods and aren't listed.
      *
      * @param   string  $class  Controller class.
      *
@@ -903,7 +987,13 @@ final class ProtectionHelper
      */
     private static function controllerTasks(string $class): array
     {
-        $base  = get_class_methods(BaseController::class);
+        self::$baseControllerMethods ??= (array) \Closure::bind(
+            static fn (): array => get_class_methods(BaseController::class),
+            null,
+            BaseController::class
+        )();
+
+        $base  = self::$baseControllerMethods;
         $tasks = [];
 
         try {
@@ -1113,7 +1203,7 @@ final class ProtectionHelper
     /**
      * Memoised content targets of page protection.
      *
-     * @var    array{articles: int[], ranges: array<int, array{0: int, 1: int}>, contacts: array<int, array{0: int, 1: int}>}|null
+     * @var    array{articles: int[], ranges: array<int, array{0: int, 1: int}>, contacts: array<int, array{0: int, 1: int}>, contactIds: int[]}|null
      * @since  0.1.0
      */
     private static ?array $contentTargets = null;
@@ -1130,13 +1220,14 @@ final class ProtectionHelper
      * Content that page protection covers outside its own pages ("selected"
      * mode with "also catch other routes" on): articles with their own
      * protected menu item, everything inside a protected com_content
-     * category (ranges), and everything inside a protected com_contact
-     * category (contacts), for lists, tag lists, modules and feeds.
+     * category (ranges), everything inside a protected com_contact category
+     * (contacts), and contacts with their own protected menu item
+     * (contactIds), for lists, tag lists, modules and feeds.
      *
      * @param   CMSApplicationInterface  $app     The application.
      * @param   Registry                 $params  Component params.
      *
-     * @return  array{articles: int[], ranges: array<int, array{0: int, 1: int}>, contacts: array<int, array{0: int, 1: int}>}
+     * @return  array{articles: int[], ranges: array<int, array{0: int, 1: int}>, contacts: array<int, array{0: int, 1: int}>, contactIds: int[]}
      *
      * @since   0.1.0
      */
@@ -1146,7 +1237,7 @@ final class ProtectionHelper
             return self::$contentTargets;
         }
 
-        $targets = ['articles' => [], 'ranges' => [], 'contacts' => []];
+        $targets = ['articles' => [], 'ranges' => [], 'contacts' => [], 'contactIds' => []];
 
         if (
             (string) $params->get('protection_mode', self::MODE_SELECTED) !== self::MODE_SELECTED
@@ -1172,6 +1263,8 @@ final class ProtectionHelper
 
             if ($option === 'com_content' && $view === 'article' && $id > 0) {
                 $targets['articles'][] = $id;
+            } elseif ($option === 'com_contact' && $view === 'contact' && $id > 0) {
+                $targets['contactIds'][] = $id;
             } elseif ($view === 'category' && $id > 0) {
                 $categories[$option][] = $id;
             }
@@ -1187,7 +1280,8 @@ final class ProtectionHelper
             }
         }
 
-        $targets['articles'] = array_values(array_unique($targets['articles']));
+        $targets['articles']   = array_values(array_unique($targets['articles']));
+        $targets['contactIds'] = array_values(array_unique($targets['contactIds']));
 
         return self::$contentTargets = $targets;
     }
@@ -1195,7 +1289,7 @@ final class ProtectionHelper
     /**
      * Does page protection cover any content outside its own pages?
      *
-     * @param   array{articles: int[], ranges: array<int, array{0: int, 1: int}>, contacts: array<int, array{0: int, 1: int}>}  $targets  From getContentTargets().
+     * @param   array{articles: int[], ranges: array<int, array{0: int, 1: int}>, contacts: array<int, array{0: int, 1: int}>, contactIds: int[]}  $targets  From getContentTargets().
      *
      * @return  boolean
      *
@@ -1203,21 +1297,27 @@ final class ProtectionHelper
      */
     public static function hasContentTargets(array $targets): bool
     {
-        return $targets['articles'] !== [] || $targets['ranges'] !== [] || ($targets['contacts'] ?? []) !== [];
+        return $targets['articles'] !== [] || $targets['ranges'] !== [] || ($targets['contacts'] ?? []) !== [] || ($targets['contactIds'] ?? []) !== [];
     }
 
     /**
-     * Is a contact in this com_contact category covered by page protection?
+     * Is this contact covered by page protection: its own protected menu
+     * item, or inside a protected com_contact category?
      *
+     * @param   int    $contactId   Contact id.
      * @param   int    $categoryId  The contact's category id.
-     * @param   array{articles: int[], ranges: array<int, array{0: int, 1: int}>, contacts: array<int, array{0: int, 1: int}>}  $targets  From getContentTargets().
+     * @param   array{articles: int[], ranges: array<int, array{0: int, 1: int}>, contacts: array<int, array{0: int, 1: int}>, contactIds: int[]}  $targets  From getContentTargets().
      *
      * @return  boolean
      *
      * @since   __DEPLOY_VERSION__
      */
-    public static function isProtectedContact(int $categoryId, array $targets): bool
+    public static function isProtectedContact(int $contactId, int $categoryId, array $targets): bool
     {
+        if ($contactId > 0 && \in_array($contactId, $targets['contactIds'] ?? [], true)) {
+            return true;
+        }
+
         if (($targets['contacts'] ?? []) === [] || $categoryId <= 0) {
             return false;
         }
@@ -1242,7 +1342,7 @@ final class ProtectionHelper
      *
      * @param   int  $articleId   Article id.
      * @param   int  $categoryId  The article's category id.
-     * @param   array{articles: int[], ranges: array<int, array{0: int, 1: int}>, contacts: array<int, array{0: int, 1: int}>}  $targets  From getContentTargets().
+     * @param   array{articles: int[], ranges: array<int, array{0: int, 1: int}>, contacts: array<int, array{0: int, 1: int}>, contactIds: int[]}  $targets  From getContentTargets().
      *
      * @return  boolean
      *
@@ -1280,7 +1380,7 @@ final class ProtectionHelper
      *
      * @param   string  $view        Request view.
      * @param   int     $categoryId  Request id (category feeds).
-     * @param   array{articles: int[], ranges: array<int, array{0: int, 1: int}>, contacts: array<int, array{0: int, 1: int}>}  $targets  From getContentTargets().
+     * @param   array{articles: int[], ranges: array<int, array{0: int, 1: int}>, contacts: array<int, array{0: int, 1: int}>, contactIds: int[]}  $targets  From getContentTargets().
      *
      * @return  boolean
      *
@@ -1434,10 +1534,14 @@ final class ProtectionHelper
             return false;
         }
 
+        // A real task (a login or contact form submit, a payment callback)
+        // has no page view of its own: it's matched by the raw `view`, which
+        // the router fills in from the page it was sent to, so a form sent
+        // from an excluded page stays excluded.
         $input   = $app->getInput();
         $details = self::describeRequest($app, $option);
         $request = [
-            'view'   => $details['view'] ?? '',
+            'view'   => $details['view'] ?? self::normaliseName((string) self::singleValue($input, 'view')),
             'id'     => $details['id'],
             'layout' => (string) self::singleValue($input, 'layout'),
         ];
@@ -1480,11 +1584,12 @@ final class ProtectionHelper
      * submit, payment callback, AJAX) never matches.
      *
      * - same component + view + id as a protected menu item; a protected item
-     *   whose link has no id (a list) covers its view whatever the id;
+     *   whose link has no id (a list) covers its view whatever the id, unless
+     *   the request is exactly another menu item's own page with that id;
      * - an article / contact / news feed (or a subcategory) inside a protected
      *   category of com_content, com_contact or com_newsfeeds, and the
      *   featured-contacts and contact category lists when they'd show a
-     *   contact from a protected category;
+     *   contact from a protected category or a protected single contact;
      * - any other component: the detail view of a protected list (a protected
      *   "members" list covers "member"), unless the request is exactly the
      *   page of the menu item it was opened under (issue #16);
@@ -1510,8 +1615,10 @@ final class ProtectionHelper
         $menu                = $app->getMenu();
         $categoryComponent   = self::CATEGORY_COMPONENTS[$option] ?? null;
         $protectedCategories = [];
+        $protectedContacts   = [];
         $detailViews         = [];
         $sameComponent       = false;
+        $ownPage             = null;
 
         foreach ($configured as $menuItemId) {
             $item  = $menu->getItem($menuItemId);
@@ -1525,13 +1632,26 @@ final class ProtectionHelper
             $itemView      = self::normaliseName(self::queryString($query, 'view'));
             $itemId        = self::queryId($query);
 
-            if ($view !== '' && $itemView === $view && ($itemId === $id || $itemId === 0)) {
+            if ($view !== '' && $itemView === $view && $itemId === $id) {
                 return true;
+            }
+
+            // A protected list without an id covers its view whatever id the
+            // request adds, except exactly another menu item's own page (a
+            // public, filtered copy of the list such as view=members&id=3).
+            if ($view !== '' && $itemView === $view && $itemId === 0) {
+                $ownPage ??= $id !== 0 && self::isActiveItemsOwnPage($app, $request);
+
+                if (!$ownPage) {
+                    return true;
+                }
             }
 
             if ($categoryComponent !== null) {
                 if ($itemView === 'category' && $itemId > 0) {
                     $protectedCategories[] = $itemId;
+                } elseif ($option === 'com_contact' && $itemView === 'contact' && $itemId > 0) {
+                    $protectedContacts[] = $itemId;
                 }
             } else {
                 $detailViews = array_merge($detailViews, self::detailViewsOf($itemView));
@@ -1547,16 +1667,21 @@ final class ProtectionHelper
         }
 
         if ($categoryComponent !== null) {
-            if ($protectedCategories === []) {
+            if ($protectedCategories === [] && $protectedContacts === []) {
                 return false;
             }
 
-            if ($id > 0 && \in_array($view, [$categoryComponent['view'], 'category'], true) && self::isInsideCategories($option, $view, $id, $protectedCategories)) {
+            if (
+                $protectedCategories !== []
+                && $id > 0
+                && \in_array($view, [$categoryComponent['view'], 'category'], true)
+                && self::isInsideCategories($option, $view, $id, $protectedCategories)
+            ) {
                 return true;
             }
 
             if ($option === 'com_contact' && \in_array($view, ['featured', 'category'], true)) {
-                return self::contactListIncludesProtected($app, $view, $id, $protectedCategories);
+                return self::contactListIncludesProtected($app, $view, $id, $protectedCategories, $protectedContacts);
             }
 
             return false;
@@ -1570,25 +1695,32 @@ final class ProtectionHelper
     }
 
     /**
-     * Would this contact list show a contact from a protected category? The
+     * Would this contact list show a protected contact (one inside a
+     * protected category, or one with its own protected menu item)? The
      * featured-contacts list shows featured contacts from every category; a
-     * contact category list also shows the contacts of its subcategories, as
-     * deep as its "Subcategory Levels" setting (maxLevel). Fails closed.
+     * contact category list shows its own contacts and those of its
+     * subcategories, as deep as its "Subcategory Levels" setting (maxLevel).
+     * Fails closed.
      *
      * @param   CMSApplicationInterface  $app                  The application.
      * @param   string                   $view                 'featured' or 'category'.
      * @param   int                      $categoryId           Request id (category lists).
      * @param   int[]                    $protectedCategories  Protected com_contact category ids.
+     * @param   int[]                    $protectedContacts    Contact ids with their own protected menu item.
      *
      * @return  boolean
      *
      * @since   __DEPLOY_VERSION__
      */
-    private static function contactListIncludesProtected(CMSApplicationInterface $app, string $view, int $categoryId, array $protectedCategories): bool
+    private static function contactListIncludesProtected(CMSApplicationInterface $app, string $view, int $categoryId, array $protectedCategories, array $protectedContacts = []): bool
     {
         try {
             $scope = [];
             $db    = Factory::getContainer()->get(DatabaseInterface::class);
+
+            if ($protectedContacts !== []) {
+                $scope[] = $db->quoteName('a.id') . ' IN (' . implode(',', array_map('intval', array_unique($protectedContacts))) . ')';
+            }
 
             foreach (array_unique($protectedCategories) as $protectedId) {
                 $range = self::getCategoryRange($protectedId, 'com_contact');
@@ -1614,7 +1746,7 @@ final class ProtectionHelper
             } else {
                 $levels = method_exists($app, 'getParams') ? (int) $app->getParams('com_contact')->get('maxLevel', 1) : -1;
 
-                if ($levels === 0 || $categoryId <= 0) {
+                if ($categoryId <= 0) {
                     return false;
                 }
 
@@ -1631,10 +1763,11 @@ final class ProtectionHelper
                     return false;
                 }
 
-                $query->where($db->quoteName('c.lft') . ' > ' . (int) $parent->lft)
-                    ->where($db->quoteName('c.rgt') . ' < ' . (int) $parent->rgt);
+                // The category itself and its subcategories (0 levels: only itself).
+                $query->where($db->quoteName('c.lft') . ' >= ' . (int) $parent->lft)
+                    ->where($db->quoteName('c.rgt') . ' <= ' . (int) $parent->rgt);
 
-                if ($levels > 0) {
+                if ($levels >= 0) {
                     $query->where($db->quoteName('c.level') . ' <= ' . ((int) $parent->level + $levels));
                 }
             }

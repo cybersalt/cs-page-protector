@@ -104,6 +104,15 @@ final class DashboardModel extends BaseDatabaseModel
             }
         } else {
             $checks[] = $this->check('success', Text::plural('COM_CSPAGEPROTECTOR_CHECK_PAGES_N', $count), $this->optionsUrl('protection'), Text::_('COM_CSPAGEPROTECTOR_CHECK_CHOOSE_PAGES'));
+
+            // 3a. Joomla doesn't load unpublished, expired or deleted menu
+            // items, so such an item protects nothing: not its own page and
+            // not its content reached through other links.
+            $inactive = $this->getInactiveItems(ProtectionHelper::getMenuItemIds($params));
+
+            if ($inactive !== []) {
+                $checks[] = $this->check('warning', Text::sprintf('COM_CSPAGEPROTECTOR_CHECK_ITEMS_INACTIVE', implode(', ', $inactive)), $this->optionsUrl('protection'), Text::_('COM_CSPAGEPROTECTOR_CHECK_CHOOSE_PAGES'));
+            }
         }
 
         // 3b. Protected modules (only mentioned once some are configured).
@@ -233,6 +242,58 @@ final class DashboardModel extends BaseDatabaseModel
         }
 
         return $items;
+    }
+
+    /**
+     * Picked menu items Joomla won't load on the site: unpublished, trashed,
+     * not yet published, expired or deleted. As "Title (id)", or "#id" when
+     * the item no longer exists.
+     *
+     * @param   int[]  $ids  Picked menu item ids.
+     *
+     * @return  string[]
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private function getInactiveItems(array $ids): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+
+        try {
+            $db    = $this->getDatabase();
+            $now   = Factory::getDate()->toSql();
+            $query = $db->createQuery()
+                ->select($db->quoteName(['id', 'title', 'published', 'publish_up', 'publish_down']))
+                ->from($db->quoteName('#__menu'))
+                ->whereIn($db->quoteName('id'), $ids, ParameterType::INTEGER);
+
+            $rows = $db->setQuery($query)->loadObjectList('id') ?: [];
+        } catch (\Throwable $e) {
+            return [];
+        }
+
+        $inactive = [];
+
+        // NULL, or the zero date older sites may still carry, means "no date".
+        $date = static fn ($value): string => $value === null || str_starts_with((string) $value, '0000') ? '' : (string) $value;
+
+        foreach ($ids as $id) {
+            $row = $rows[$id] ?? null;
+
+            if ($row === null) {
+                $inactive[] = '#' . $id;
+            } elseif (
+                (int) $row->published !== 1
+                || ($date($row->publish_up) !== '' && $date($row->publish_up) > $now)
+                || ($date($row->publish_down) !== '' && $date($row->publish_down) < $now)
+            ) {
+                $inactive[] = $row->title . ' (' . $id . ')';
+            }
+        }
+
+        return $inactive;
     }
 
     /**

@@ -526,7 +526,7 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
             $categoryId = (int) ($article->core_catid ?? $article->catid ?? 0);
 
             if ($type === 'com_contact.contact') {
-                $protected = ProtectionHelper::isProtectedContact($categoryId, $targets);
+                $protected = ProtectionHelper::isProtectedContact((int) ($article->content_item_id ?? 0), $categoryId, $targets);
             } elseif ($type === 'com_content.article') {
                 $protected = ProtectionHelper::isProtectedArticle((int) ($article->content_item_id ?? $article->id ?? 0), $categoryId, $targets);
             } else {

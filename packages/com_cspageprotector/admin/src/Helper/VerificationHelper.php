@@ -59,9 +59,11 @@ final class VerificationHelper
 
         // The cookie is the pass. No cookie, no pass - even mid-session - so
         // clearing it (or "Clear my pass" on the dashboard) always resets.
-        $cookie = (string) $app->getInput()->cookie->getCmd(self::COOKIE_NAME, '');
+        // Read raw: a pass is only ever checked byte for byte, and a cookie
+        // sent as an array (cspp_pass[x]=1) is simply no pass, not a warning.
+        $cookie = $app->getInput()->cookie->get(self::COOKIE_NAME, '', 'raw');
 
-        if ($cookie === '') {
+        if (!\is_string($cookie) || $cookie === '') {
             return false;
         }
 

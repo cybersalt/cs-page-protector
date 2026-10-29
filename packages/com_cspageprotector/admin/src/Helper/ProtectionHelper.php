@@ -678,16 +678,22 @@ final class ProtectionHelper
 
         // option[]=…, view[]=…, id[]=1, Itemid[]=… and the like: a component
         // may still turn them into a page, but they can't be matched against
-        // the protected ones, so treat them as protected (fail closed).
-        foreach (self::SINGLE_VALUE_KEYS as $key) {
-            if (self::singleValue($input, $key) === null) {
-                return true;
-            }
+        // the protected ones, so treat them as protected (fail closed). An
+        // array option or Itemid can't be tied to a component or menu item,
+        // and in "every page except" mode every component has something
+        // protected, so those are protected straight away. Otherwise only a
+        // component with something protected counts (below): com_tags menu
+        // items carry their tag as id[0]=N, and strict routing sends that on.
+        $arrays    = array_values(array_filter(self::SINGLE_VALUE_KEYS, static fn (string $key): bool => self::singleValue($input, $key) === null));
+        $allExcept = (string) $params->get('protection_mode', self::MODE_SELECTED) === self::MODE_ALL_EXCEPT;
+
+        if ($arrays !== [] && ($option === null || $allExcept || \in_array('Itemid', $arrays, true))) {
+            return true;
         }
 
         $configured = self::getMenuItemIds($params);
 
-        if ((string) $params->get('protection_mode', self::MODE_SELECTED) === self::MODE_ALL_EXCEPT) {
+        if ($allExcept) {
             // Only honour an exclusion when the request really IS that page.
             // A matching Itemid alone isn't enough: Joomla falls back to the
             // default menu item for unrouted URLs, and an Itemid can be bolted
@@ -714,7 +720,14 @@ final class ProtectionHelper
         // protected, so leave every other component alone (and unread).
         $option    = (string) $option;
         $views     = array_values(array_filter($views, static fn (string $entry): bool => str_starts_with($entry, $option . ':')));
-        $protected = (int) $params->get('match_content', 1) === 1 ? self::itemsOfComponent($app, $protected, $option) : [];
+        $ownItems  = self::itemsOfComponent($app, $protected, $option);
+        $protected = (int) $params->get('match_content', 1) === 1 ? $ownItems : [];
+
+        // An array in view, id, task and the like, in a component that has a
+        // protected menu item or view: can't be matched, so protected.
+        if ($arrays !== []) {
+            return $views !== [] || $ownItems !== [];
+        }
 
         if ($views === [] && $protected === []) {
             return false;
@@ -789,8 +802,9 @@ final class ProtectionHelper
      * request can't step around a view rule by leaving `view` out:
      *
      * - ComponentDispatcher runs `task=<controller>.<method>` (or
-     *   `controller=` plus `task=<method>`). A method the controller has,
-     *   other than display(), runs instead of a page view;
+     *   `controller=` plus `task=<method>`). A method the controller has, or
+     *   a task alias of one, other than display(), runs instead of a page
+     *   view;
      * - otherwise display() runs (a method the controller doesn't have falls
      *   back to it as well) and shows `view`, or with no `view` the view
      *   named after the controller.
@@ -974,10 +988,12 @@ final class ProtectionHelper
     private static ?array $baseControllerMethods = null;
 
     /**
-     * The tasks a controller answers (lower case), the way BaseController
-     * registers them: its public methods, minus BaseController's own (of any
-     * visibility) except display(). Task aliases (registerTask()) aren't
-     * methods and aren't listed.
+     * The tasks a controller answers (lower case), other than ones that show
+     * a page, the way BaseController registers them: its public methods,
+     * minus BaseController's own (of any visibility) except display(), plus
+     * the task aliases its code registers (see controllerAliases()). An alias
+     * that points at display(), or one that's unregistered again, is left
+     * out: Joomla shows a page for it.
      *
      * @param   string  $class  Controller class.
      *
@@ -1008,7 +1024,119 @@ final class ProtectionHelper
             return [];
         }
 
+        // registerTask() only takes a method the controller has (or display).
+        $methods = $tasks;
+
+        foreach (self::controllerAliases($class) as $alias => $target) {
+            $tasks = array_values(array_diff($tasks, [$alias]));
+
+            if ($target !== null && $target !== 'display' && \in_array($target, $methods, true)) {
+                $tasks[] = $alias;
+            }
+        }
+
         return $tasks;
+    }
+
+    /**
+     * Memoised controllerAliases() results, keyed by class.
+     *
+     * @var    array<string, array<string, string|null>>
+     * @since  __DEPLOY_VERSION__
+     */
+    private static array $aliasMemo = [];
+
+    /**
+     * Task aliases a controller registers, read from the source of the class
+     * and its parents up to BaseController (parents first, so a subclass
+     * wins): `registerTask('notify', 'callback')` gives notify => callback,
+     * `unregisterTask('notify')` gives notify => null. The controller is
+     * never created, so none of its code runs. Only calls with plain quoted
+     * names count; anything else is left out, and the request then counts as
+     * a page view (fail closed). Without PHP's tokenizer, no aliases.
+     *
+     * @param   string  $class  Controller class.
+     *
+     * @return  array<string, string|null>  Lower-case alias => lower-case method, or null.
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function controllerAliases(string $class): array
+    {
+        if (isset(self::$aliasMemo[$class])) {
+            return self::$aliasMemo[$class];
+        }
+
+        $aliases = [];
+
+        try {
+            if (!\function_exists('token_get_all')) {
+                return self::$aliasMemo[$class] = [];
+            }
+
+            $files = [];
+
+            for ($reflection = new \ReflectionClass($class); $reflection && $reflection->getName() !== BaseController::class; $reflection = $reflection->getParentClass() ?: null) {
+                $file = $reflection->getFileName();
+
+                if (\is_string($file) && is_file($file)) {
+                    array_unshift($files, $file);
+                }
+            }
+
+            foreach (array_unique($files) as $file) {
+                $tokens = array_values(array_filter(
+                    token_get_all((string) file_get_contents($file)),
+                    static fn ($token): bool => !\is_array($token) || !\in_array($token[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)
+                ));
+
+                foreach ($tokens as $i => $token) {
+                    if (!\is_array($token) || $token[0] !== T_STRING || ($tokens[$i + 1] ?? null) !== '(') {
+                        continue;
+                    }
+
+                    $call  = self::asciiLower($token[1]);
+                    $first = self::taskNameToken($tokens[$i + 2] ?? null);
+
+                    if ($first === null || $first === '__default') {
+                        continue;
+                    }
+
+                    if ($call === 'registertask' && ($tokens[$i + 3] ?? null) === ',' && ($tokens[$i + 5] ?? null) === ')') {
+                        $second = self::taskNameToken($tokens[$i + 4] ?? null);
+
+                        if ($second !== null) {
+                            $aliases[$first] = $second;
+                        }
+                    } elseif ($call === 'unregistertask' && ($tokens[$i + 3] ?? null) === ')') {
+                        $aliases[$first] = null;
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            $aliases = [];
+        }
+
+        return self::$aliasMemo[$class] = $aliases;
+    }
+
+    /**
+     * A task or method name written as a plain quoted string in PHP source
+     * ('notify' or "notify"), lower case; null for anything else.
+     *
+     * @param   mixed  $token  A token_get_all() token.
+     *
+     * @return  string|null
+     *
+     * @since   __DEPLOY_VERSION__
+     */
+    private static function taskNameToken($token): ?string
+    {
+        if (!\is_array($token) || $token[0] !== T_CONSTANT_ENCAPSED_STRING) {
+            return null;
+        }
+
+        return preg_match('/^([\'"])([A-Za-z0-9_]+)\1$/', $token[1], $m) ? self::asciiLower($m[2]) : null;
     }
 
     /**

@@ -104,7 +104,7 @@ Credits map for the open issues (keep this updated as issues are filed):
 | #5 Warn when no captcha is available | Bjørn (question; shipped and credited in 0.2.0, closed) |
 | #9 Turnstile and other captchas | Tim for now; Bjørn and Julie also asked for it on stream (WMW #355). Ask Tim before crediting |
 | #13 Send failed visitors to an info page | Bjørn |
-| #2, #6, #7, #8, #10, #11, #12, #14, #15, #16 | Tim (no credit line needed) |
+| #2, #6, #7, #8, #10, #11, #12, #14, #15, #16, #17 | Tim (no credit line needed) |
 
 ## Module protection (#3, Bjørn)
 

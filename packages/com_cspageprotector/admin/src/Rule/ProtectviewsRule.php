@@ -26,7 +26,7 @@ use Joomla\Registry\Registry;
  * that could never do anything (com_ajax, this component), are refused with
  * the reason.
  *
- * @since  __DEPLOY_VERSION__
+ * @since  0.3.0
  */
 final class ProtectviewsRule extends FormRule
 {
@@ -41,7 +41,7 @@ final class ProtectviewsRule extends FormRule
      *
      * @throws  \UnexpectedValueException  With the reason, for refused entries (Form shows its message).
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     public function test(\SimpleXMLElement $element, $value, $group = null, ?Registry $input = null, ?Form $form = null)
     {

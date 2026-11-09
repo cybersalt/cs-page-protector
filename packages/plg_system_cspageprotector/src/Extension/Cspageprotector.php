@@ -21,16 +21,22 @@ use Cybersalt\Component\Cspageprotector\Administrator\Helper\VerificationHelper;
 use Joomla\CMS\Application\CMSApplicationInterface;
 use Joomla\CMS\Cache\CacheControllerFactoryInterface;
 use Joomla\CMS\Component\ComponentHelper;
+use Joomla\CMS\Document\Document;
+use Joomla\CMS\Document\HtmlDocument;
 use Joomla\CMS\Event\Result\ResultAwareInterface;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Log\Log;
+use Joomla\CMS\MVC\Factory\MVCFactoryServiceInterface;
 use Joomla\CMS\Plugin\CMSPlugin;
 use Joomla\CMS\Session\Session;
 use Joomla\CMS\Uri\Uri;
+use Joomla\CMS\WebAsset\WebAssetManager;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Event\EventInterface;
+use Joomla\Event\Priority;
 use Joomla\Event\SubscriberInterface;
+use Joomla\Input\Input;
 use Joomla\Registry\Registry;
 
 /**
@@ -59,21 +65,31 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
     protected $autoloadLanguage = true;
 
     /**
-     * @return  array<string, string>
+     * The content events run ahead of other plugins: a locked article's text
+     * is matched as it is stored, and the fields plugin never prints a locked
+     * article's custom fields. So does onAfterDispatch: the render-time net
+     * looks at what the task did, not at what other plugins add after it.
+     *
+     * @return  array<string, string|array{0: string, 1: int}>
      *
      * @since   0.1.0
      */
     public static function getSubscribedEvents(): array
     {
         return [
-            'onAfterRoute'           => 'onAfterRoute',
-            'onPageCacheSetCaching'  => 'onPageCacheSetCaching',
-            'onPageCacheIsExcluded'  => 'onPageCacheIsExcluded',
-            'onExtensionAfterSave'   => 'onExtensionAfterSave',
-            'onAfterModuleList'      => 'onAfterModuleList',
-            'onRenderModule'         => 'onRenderModule',
-            'onContentPrepare'       => 'onContentPrepare',
-            'onBeforeCompileHead'    => 'onBeforeCompileHead',
+            'onAfterRoute'              => 'onAfterRoute',
+            'onAfterInitialiseDocument' => ['onAfterInitialiseDocument', Priority::LOW],
+            'onAfterDispatch'           => ['onAfterDispatch', Priority::HIGH],
+            'onPageCacheSetCaching'     => 'onPageCacheSetCaching',
+            'onPageCacheIsExcluded'     => 'onPageCacheIsExcluded',
+            'onExtensionAfterSave'      => 'onExtensionAfterSave',
+            'onAfterModuleList'         => 'onAfterModuleList',
+            'onRenderModule'            => 'onRenderModule',
+            'onContentPrepare'          => ['onContentPrepare', Priority::HIGH],
+            'onContentAfterTitle'       => ['onLockedItemDisplay', Priority::HIGH],
+            'onContentBeforeDisplay'    => ['onLockedItemDisplay', Priority::HIGH],
+            'onContentAfterDisplay'     => ['onLockedItemDisplay', Priority::HIGH],
+            'onBeforeCompileHead'       => 'onBeforeCompileHead',
         ];
     }
 
@@ -108,13 +124,21 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Set once a protected module is part of this page, so the page is kept
-     * out of the page cache whoever is viewing it.
+     * Set once a protected module or a protected article is part of this
+     * page, so the page is kept out of the page cache whoever is viewing it.
      *
      * @var    boolean
      * @since  0.1.0
      */
-    private bool $protectedModuleOnPage = false;
+    private bool $pageDependsOnVisitor = false;
+
+    /**
+     * Articles whose text was swapped for the notice, see onLockedItemDisplay().
+     *
+     * @var    \SplObjectStorage|null
+     * @since  0.3.0
+     */
+    private ?\SplObjectStorage $lockedItems = null;
 
     /**
      * Protected modules: in "hide" mode (and always on the challenge page
@@ -150,7 +174,7 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
             }
 
             // Whatever this visitor sees, the page differs per visitor now.
-            $this->protectedModuleOnPage = true;
+            $this->pageDependsOnVisitor = true;
             $app->allowCache(false);
 
             // Never let Joomla's module cache store a protected module: the
@@ -225,7 +249,7 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
             }
 
             // Keeps the page out of the page cache, wherever the module came from.
-            $this->protectedModuleOnPage = true;
+            $this->pageDependsOnVisitor = true;
 
             if (ProtectionHelper::visitorHasAccess($app, $params)) {
                 return;
@@ -415,6 +439,14 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
             $this->guardSharedContent($app, $params);
 
             if (!ProtectionHelper::isProtectedRequest($app, $params)) {
+                // Let through as a callback or form submit in a component
+                // that has something protected: if it shows an HTML page
+                // anyway, onAfterDispatch() replaces it with the check.
+                if (ProtectionHelper::needsRenderCheck($app, $params)) {
+                    $app->allowCache(false);
+                    $this->renderCheck = true;
+                }
+
                 return;
             }
 
@@ -484,6 +516,67 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
         ) {
             $this->sendBlocked($app);
         }
+
+        // Tag and Smart Search feeds print the items' text directly and fire no
+        // content event.
+        if ($this->isUngatedFeed($app, $params) && !ProtectionHelper::visitorHasAccess($app, $params)) {
+            $this->sendBlocked($app);
+        }
+    }
+
+    /**
+     * A non-HTML com_content request while content is protected: refused or
+     * not (see guardSharedContent()), it depends on who is asking.
+     *
+     * @param   CMSApplicationInterface  $app     The application.
+     * @param   Registry                 $params  Component params.
+     *
+     * @return  boolean
+     *
+     * @since   0.3.0
+     */
+    private function isContentFeed(CMSApplicationInterface $app, Registry $params): bool
+    {
+        $input  = $app->getInput();
+        $format = ProtectionHelper::singleValue($input, 'format', 'word', 'html');
+
+        return ProtectionHelper::asciiLower((string) ProtectionHelper::singleValue($input, 'option')) === 'com_content'
+            && ($format === null || ProtectionHelper::asciiLower($format) !== 'html')
+            && ProtectionHelper::hasContentTargets(ProtectionHelper::getContentTargets($app, $params));
+    }
+
+    /**
+     * A feed that can carry protected content without the content gate ever
+     * seeing it: anything non-HTML from com_tags (a tag can carry any article
+     * or contact) and the com_finder feed. The tag search field's AJAX call
+     * returns tag names only. Exactly that call: an unknown task (a bare
+     * `searchajax`) runs display(), so the feed.
+     *
+     * @param   CMSApplicationInterface  $app     The application.
+     * @param   Registry                 $params  Component params.
+     *
+     * @return  boolean
+     *
+     * @since   0.3.0
+     */
+    private function isUngatedFeed(CMSApplicationInterface $app, Registry $params): bool
+    {
+        if (!ProtectionHelper::hasContentTargets(ProtectionHelper::getContentTargets($app, $params))) {
+            return false;
+        }
+
+        $input  = $app->getInput();
+        $option = ProtectionHelper::asciiLower((string) ProtectionHelper::singleValue($input, 'option'));
+        $format = ProtectionHelper::singleValue($input, 'format', 'word', 'html');
+        $format = $format === null ? null : ProtectionHelper::asciiLower($format);
+
+        if ($option === 'com_finder') {
+            return $format === null || $format === 'feed';
+        }
+
+        return $option === 'com_tags'
+            && $format !== 'html'
+            && ProtectionHelper::asciiLower((string) ProtectionHelper::singleValue($input, 'task')) !== 'tags.searchajax';
     }
 
     /**
@@ -512,6 +605,11 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
             return;
         }
 
+        // A category's own description: its id isn't an article's.
+        if (str_ends_with($context, '.categories')) {
+            return;
+        }
+
         try {
             $params  = ProtectionHelper::getParams();
             $targets = ProtectionHelper::getContentTargets($app, $params);
@@ -528,12 +626,26 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
             if ($type === 'com_contact.contact') {
                 $protected = ProtectionHelper::isProtectedContact((int) ($article->content_item_id ?? 0), $categoryId, $targets);
             } elseif ($type === 'com_content.article') {
-                $protected = ProtectionHelper::isProtectedArticle((int) ($article->content_item_id ?? $article->id ?? 0), $categoryId, $targets);
+                $articleId = (int) ($article->content_item_id ?? $article->id ?? 0);
+                $protected = ProtectionHelper::isProtectedArticle($articleId, $categoryId, $targets);
+
+                // Core's article modules hand over the intro text and nothing else.
+                if (!$protected && $articleId === 0 && $categoryId === 0 && str_starts_with($context, 'mod_articles')) {
+                    $protected = ProtectionHelper::isProtectedIntroText((string) ($article->text ?? ''), $targets);
+                }
             } else {
                 return;
             }
 
-            if (!$protected || ProtectionHelper::visitorHasAccess($app, $params)) {
+            if (!$protected) {
+                return;
+            }
+
+            // Whatever this visitor sees, the page differs per visitor now.
+            $this->pageDependsOnVisitor = true;
+            $app->allowCache(false);
+
+            if (ProtectionHelper::visitorHasAccess($app, $params)) {
                 return;
             }
 
@@ -550,12 +662,55 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
             if ($type === 'com_contact.contact' && property_exists($article, 'core_images')) {
                 $article->core_images = '{}';
             }
+
+            $this->lockItem($article);
         } catch (\Throwable $e) {
             // Fail closed: never print protected text after an error.
             $article->text = '';
             $article->introtext = '';
             $article->fulltext = '';
+            $this->lockItem($article);
+            $this->pageDependsOnVisitor = true;
             Log::add('cs-page-protector content gate error: ' . $e->getMessage(), Log::ERROR, 'com_cspageprotector');
+        }
+    }
+
+    /**
+     * Keep a locked article's custom fields off the page: for templates that
+     * print them from the item, and for onLockedItemDisplay().
+     *
+     * @param   object  $item  The article.
+     *
+     * @return  void
+     *
+     * @since   0.3.0
+     */
+    private function lockItem(object $item): void
+    {
+        $item->jcfields = [];
+
+        $this->lockedItems ??= new \SplObjectStorage();
+        $this->lockedItems->attach($item);
+    }
+
+    /**
+     * A locked article prints nothing through the display events. The fields
+     * plugin loads an item's field values itself when these fire, so emptying
+     * jcfields isn't enough, and other plugins' output (ratings, say) belongs
+     * to the article too.
+     *
+     * @param   EventInterface  $event  onContentAfterTitle, onContentBeforeDisplay, onContentAfterDisplay
+     *
+     * @return  void
+     *
+     * @since   0.3.0
+     */
+    public function onLockedItemDisplay(EventInterface $event): void
+    {
+        $item = $event->getArgument('subject') ?? $event->getArgument(1);
+
+        if (\is_object($item) && $this->lockedItems !== null && $this->lockedItems->contains($item)) {
+            $event->stopPropagation();
         }
     }
 
@@ -588,7 +743,7 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
     {
         // Protected page, or a page carrying a protected module: either way the
         // output depends on the visitor and must never be cached.
-        if ($this->protectedModuleOnPage || $this->isProtectedSafe()) {
+        if ($this->pageDependsOnVisitor || $this->isProtectedSafe()) {
             $this->addResult($event, true);
         }
     }
@@ -608,6 +763,56 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
         // Protected pages must never land in a browser or proxy shared cache.
         $app->allowCache(false);
 
+        $decision = $this->decide($app, $params, '');
+
+        if ($decision === self::DECISION_PASS) {
+            return;
+        }
+
+        if ($decision === self::DECISION_BLOCK) {
+            $this->sendBlocked($app);
+        }
+
+        // Hand the request to the challenge page. The URL and the active menu
+        // item stay the same, so the visitor sees the challenge inside the
+        // site's normal template and lands back here once they pass.
+        $this->handToChallenge($app->getInput());
+    }
+
+    /**
+     * The visitor may see the page (exempt, verified, or the captcha can't
+     * run and the site lets visitors through).
+     */
+    private const DECISION_PASS = 0;
+
+    /**
+     * Plain 403: the captcha can't run and the site blocks, or a non-HTML format.
+     */
+    private const DECISION_BLOCK = 1;
+
+    /**
+     * Show the check.
+     */
+    private const DECISION_CHALLENGE = 2;
+
+    /**
+     * What happens to a visitor on a protected page (or, for the render-time
+     * safety net, on a page a task showed): exempt (allow-listed IP, logged
+     * in, a verified search engine) or holding a valid pass: pass. Otherwise
+     * the check, or a plain 403 when the captcha can't run and the site is
+     * set to block, or for non-HTML formats. Logs the event the same way for
+     * both.
+     *
+     * @param   CMSApplicationInterface  $app     The application.
+     * @param   Registry                 $params  Component params.
+     * @param   string                   $detail  Log details for a challenge ('' on a protected page).
+     *
+     * @return  integer  One of the DECISION_* constants.
+     *
+     * @since   0.3.0
+     */
+    private function decide(CMSApplicationInterface $app, Registry $params, string $detail): int
+    {
         $input     = $app->getInput();
         $ip        = IpHelper::getClientIp($params);
         $userAgent = $input->server->getString('HTTP_USER_AGENT', '');
@@ -622,11 +827,11 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
                 LogHelper::log($params, LogHelper::EVENT_BOT, $ip, $userAgent, $url, $itemId, $captcha);
             }
 
-            return;
+            return self::DECISION_PASS;
         }
 
         if (VerificationHelper::isVerified($app, $params, $ip, $userAgent)) {
-            return;
+            return self::DECISION_PASS;
         }
 
         if (!CaptchaHelper::isAvailable($captcha)) {
@@ -641,11 +846,7 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
                 Text::sprintf('PLG_SYSTEM_CSPAGEPROTECTOR_LOG_CAPTCHA_UNAVAILABLE', $captcha)
             );
 
-            if ((string) $params->get('captcha_unavailable', 'allow') === 'allow') {
-                return;
-            }
-
-            $this->sendBlocked($app);
+            return (string) $params->get('captcha_unavailable', 'allow') === 'allow' ? self::DECISION_PASS : self::DECISION_BLOCK;
         }
 
         // Feeds, JSON, raw and other non-HTML formats can't show a challenge,
@@ -655,15 +856,27 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
 
         if ($format !== 'html') {
             LogHelper::log($params, LogHelper::EVENT_BLOCKED, $ip, $userAgent, $url, $itemId, $captcha, 'format=' . $format);
-            $this->sendBlocked($app);
+
+            return self::DECISION_BLOCK;
         }
 
-        LogHelper::log($params, LogHelper::EVENT_CHALLENGED, $ip, $userAgent, $url, $itemId, $captcha);
+        LogHelper::log($params, LogHelper::EVENT_CHALLENGED, $ip, $userAgent, $url, $itemId, $captcha, $detail);
 
-        // Hand the request to the challenge page. The URL and the active menu
-        // item stay the same, so the visitor sees the challenge inside the
-        // site's normal template and lands back here once they pass.
-        $input->set('cspp_return', base64_encode($url));
+        return self::DECISION_CHALLENGE;
+    }
+
+    /**
+     * Point the request at the challenge page, keeping the URL to come back to.
+     *
+     * @param   Input  $input  The request input.
+     *
+     * @return  void
+     *
+     * @since   0.3.0
+     */
+    private function handToChallenge(Input $input): void
+    {
+        $input->set('cspp_return', base64_encode(Uri::getInstance()->toString()));
         $input->set('cspp_inplace', 1);
         $input->set('option', 'com_cspageprotector');
         $input->set('view', 'challenge');
@@ -674,6 +887,325 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
         // controller=contact would make the dispatcher look for a
         // ContactController in this component (unset: no `controller` at all).
         $input->set('controller', null);
+    }
+
+    /**
+     * Set in onAfterRoute when the request was let through as a real task
+     * (a callback, a form submit) in a component that has something
+     * protected (ProtectionHelper::needsRenderCheck()).
+     *
+     * @var    boolean
+     * @since  0.3.0
+     */
+    private bool $renderCheck = false;
+
+    /**
+     * The document, response, breadcrumbs and messages as they were just
+     * before the component ran, for the render-time safety net.
+     *
+     * @var    array<string, mixed>|null
+     * @since  0.3.0
+     */
+    private ?array $renderSnapshot = null;
+
+    /**
+     * Render-time safety net, part 1: remember the page as it is just before
+     * the component runs, so that if the task shows a page that has to be
+     * replaced by the check, nothing it added (title, meta tags, scripts,
+     * module buffers, headers and status, breadcrumbs, messages) is left.
+     *
+     * @param   EventInterface  $event  onAfterInitialiseDocument
+     *
+     * @return  void
+     *
+     * @since   0.3.0
+     */
+    public function onAfterInitialiseDocument(EventInterface $event): void
+    {
+        if (!$this->renderCheck) {
+            return;
+        }
+
+        $app = $this->getApplication();
+
+        try {
+            $document = $app->getDocument();
+
+            if (!$document instanceof HtmlDocument) {
+                return;
+            }
+
+            $head = $document->getHeadData();
+            unset($head['assetManager'], $head['scriptText']);
+
+            $pathway = method_exists($app, 'getPathway') ? $app->getPathway()->getPathway() : null;
+
+            $this->renderSnapshot = [
+                'head'     => $head,
+                'assets'   => (array) ($document->getWebAssetManager()->getManagerState()['activeAssets'] ?? []),
+                'document' => $this->documentState($document),
+                'buffer'   => Document::$_buffer,
+                'response' => method_exists($app, 'getResponse') ? $app->getResponse() : null,
+                // Copies: a view renames breadcrumbs in place (setItemName()).
+                'pathway'  => \is_array($pathway) ? array_map(static fn ($item) => \is_object($item) ? clone $item : $item, $pathway) : null,
+                'messages' => method_exists($app, 'getMessageQueue') ? $app->getMessageQueue() : null,
+            ];
+        } catch (\Throwable $e) {
+            $this->renderSnapshot = null;
+        }
+    }
+
+    /**
+     * Render-time safety net, part 2. Which page a task shows is read from
+     * the controller's source, and that reading can never be complete. So a
+     * request let through as a callback in a component that has something
+     * protected (see ProtectionHelper::needsRenderCheck()) is checked again
+     * here, after it ran: if it produced an HTML page and the visitor has no
+     * pass, that page is replaced by the check, exactly as on a protected
+     * page (same status, headers, exemptions and log entry, detail "task").
+     *
+     * Not affected: callbacks that redirect or exit (they never get here),
+     * an empty page, and other formats (raw, JSON, feeds).
+     *
+     * @return  void
+     *
+     * @since   0.3.0
+     */
+    public function onAfterDispatch(): void
+    {
+        if (!$this->renderCheck) {
+            return;
+        }
+
+        $this->renderCheck = false;
+        $app               = $this->getApplication();
+
+        try {
+            $document = $app->getDocument();
+
+            if (!$document instanceof HtmlDocument) {
+                return;
+            }
+
+            if (!$this->taskMadeAPage($app, $document)) {
+                return;
+            }
+
+            $params   = ProtectionHelper::getParams();
+            $decision = $this->decide($app, $params, 'task');
+
+            if ($decision === self::DECISION_PASS) {
+                return;
+            }
+
+            // Nothing the task set may reach the visitor.
+            $this->restorePage($app, $document);
+            $app->allowCache(false);
+
+            if ($decision === self::DECISION_BLOCK) {
+                $this->sendBlocked($app);
+            }
+
+            $this->handToChallenge($app->getInput());
+            $document->setBuffer($this->renderChallenge($app), ['type' => 'component']);
+        } catch (\Throwable $e) {
+            // Fail closed: whatever the task produced is never shown.
+            Document::$_buffer = null;
+
+            try {
+                Log::add('cs-page-protector render check error: ' . $e->getMessage(), Log::ERROR, 'com_cspageprotector');
+            } catch (\Throwable $ignored) {
+                // Nothing more to do.
+            }
+
+            $this->sendBlocked($app);
+        }
+    }
+
+    /**
+     * What a document holds outside its head data.
+     *
+     * @param   HtmlDocument  $document  The page's document.
+     *
+     * @return  array<string, mixed>
+     *
+     * @since   0.3.0
+     */
+    private function documentState(HtmlDocument $document): array
+    {
+        return [
+            'mime'      => $document->getMimeEncoding(),
+            'charset'   => $document->getCharset(),
+            'generator' => $document->getGenerator(),
+            'base'      => $document->getBase(),
+            'language'  => $document->getLanguage(),
+            'direction' => $document->getDirection(),
+            'tab'       => $document->_getTab(),
+            'preload'   => $document->getPreloadManager()->getLinkProvider(),
+        ];
+    }
+
+    /**
+     * Did the task put anything on the page? The component printed something,
+     * or changed a module position's buffer, the head, the document's other
+     * settings, the assets, the breadcrumbs or the messages while it ran. A task that shows nothing
+     * and leaves all of that alone isn't a page, whatever it did otherwise.
+     *
+     * @param   CMSApplicationInterface  $app       The application.
+     * @param   HtmlDocument             $document  The page's document.
+     *
+     * @return  boolean
+     *
+     * @since   0.3.0
+     */
+    private function taskMadeAPage(CMSApplicationInterface $app, HtmlDocument $document): bool
+    {
+        $buffers = \is_array(Document::$_buffer) ? Document::$_buffer : [];
+        $page    = $buffers['component'][''][''] ?? null;
+
+        if (\is_string($page) && trim($page) !== '') {
+            return true;
+        }
+
+        $snapshot = $this->renderSnapshot;
+
+        if ($snapshot === null) {
+            return false;
+        }
+
+        $before = \is_array($snapshot['buffer']) ? $snapshot['buffer'] : [];
+        unset($buffers['component'], $before['component']);
+
+        $head = $document->getHeadData();
+        unset($head['assetManager'], $head['scriptText']);
+
+        return $buffers != $before
+            || $head != $snapshot['head']
+            || $this->documentState($document) != $snapshot['document']
+            || (array) ($document->getWebAssetManager()->getManagerState()['activeAssets'] ?? []) != $snapshot['assets']
+            || (method_exists($app, 'getPathway') && $app->getPathway()->getPathway() != $snapshot['pathway'])
+            || (method_exists($app, 'getMessageQueue') && $app->getMessageQueue() != $snapshot['messages']);
+    }
+
+    /**
+     * Put the document, response, breadcrumbs and messages back the way they
+     * were before the component ran (see onAfterInitialiseDocument()).
+     *
+     * @param   CMSApplicationInterface  $app       The application.
+     * @param   HtmlDocument             $document  The page's document.
+     *
+     * @return  void
+     *
+     * @since   0.3.0
+     */
+    private function restorePage(CMSApplicationInterface $app, HtmlDocument $document): void
+    {
+        $snapshot = $this->renderSnapshot;
+
+        // Title, description, meta tags, links, scripts, styles, custom tags, script options.
+        $document->resetHeadData();
+
+        if ($snapshot !== null) {
+            $document->setHeadData($snapshot['head']);
+
+            // Not part of the head data. Without the sync no meta tag is added.
+            $document->setMimeEncoding($snapshot['document']['mime'], false);
+            $document->setCharset($snapshot['document']['charset']);
+            $document->setTab($snapshot['document']['tab']);
+            $document->setGenerator($snapshot['document']['generator']);
+            $document->setBase($snapshot['document']['base']);
+            $document->setLanguage($snapshot['document']['language']);
+            $document->setDirection($snapshot['document']['direction']);
+            $document->getPreloadManager()->setLinkProvider($snapshot['document']['preload']);
+        } else {
+            $document->setMetaData('rights', $app->get('MetaRights'));
+        }
+
+        // Assets (and inline scripts and styles) the task's view asked for.
+        $assets = $document->getWebAssetManager();
+        $assets->reset();
+
+        foreach ((array) ($snapshot['assets'] ?? []) as $type => $names) {
+            foreach ((array) $names as $name => $state) {
+                if ($state === WebAssetManager::ASSET_STATE_ACTIVE) {
+                    $assets->useAsset((string) $type, (string) $name);
+                }
+            }
+        }
+
+        // Module positions a view filled in itself.
+        Document::$_buffer = $snapshot['buffer'] ?? null;
+
+        // Headers and status the task set.
+        if (($snapshot['response'] ?? null) !== null) {
+            $app->setResponse($snapshot['response']);
+        } else {
+            $app->setHeader('Status', '200', true);
+        }
+
+        if (\is_array($snapshot['pathway'] ?? null) && method_exists($app, 'getPathway')) {
+            $app->getPathway()->setPathway($snapshot['pathway']);
+        }
+
+        if (method_exists($app, 'getMessageQueue')) {
+            $app->getMessageQueue(true);
+
+            foreach ((array) ($snapshot['messages'] ?? []) as $message) {
+                if (\is_array($message) && isset($message['message'])) {
+                    $app->enqueueMessage((string) $message['message'], (string) ($message['type'] ?? 'message'));
+                }
+            }
+        }
+    }
+
+    /**
+     * Render the challenge page's component output, the way ComponentHelper::
+     * renderComponent() would. The component's base path is given
+     * explicitly: by now JPATH_COMPONENT points at the component that ran.
+     *
+     * @param   CMSApplicationInterface  $app  The application.
+     *
+     * @return  string
+     *
+     * @since   0.3.0
+     */
+    private function renderChallenge(CMSApplicationInterface $app): string
+    {
+        $option   = 'com_cspageprotector';
+        $language = $app->getLanguage();
+        $language->load($option, JPATH_SITE) || $language->load($option, JPATH_SITE . '/components/' . $option);
+
+        $component = $app->bootComponent($option);
+
+        if (!$component instanceof MVCFactoryServiceInterface) {
+            throw new \RuntimeException('The challenge component can\'t be loaded.');
+        }
+
+        $scope      = $app->scope ?? null;
+        $app->scope = $option;
+        $level      = ob_get_level();
+
+        ob_start();
+
+        try {
+            $controller = $component->getMVCFactory()->createController(
+                'display',
+                'Site',
+                ['option' => $option, 'base_path' => JPATH_SITE . '/components/' . $option],
+                $app,
+                $app->getInput()
+            );
+
+            $controller->execute('display');
+
+            return (string) ob_get_contents();
+        } finally {
+            while (ob_get_level() > $level) {
+                ob_end_clean();
+            }
+
+            $app->scope = $scope;
+        }
     }
 
     /**
@@ -837,7 +1369,9 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
 
     /**
      * isProtectedRequest() wrapped for the page-cache events, which may fire
-     * before onAfterRoute's own check.
+     * before onAfterRoute's own check. A task let through that the
+     * render-time safety net may replace counts too: what it shows depends
+     * on the visitor, so it is never served from or stored in the cache.
      *
      * @return  boolean
      *
@@ -852,7 +1386,14 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
         }
 
         try {
-            return ProtectionHelper::isProtectedRequest($app, ProtectionHelper::getParams());
+            $params = ProtectionHelper::getParams();
+
+            // A feed fires no content event, so nothing else marks it as
+            // differing per visitor, and the cache plugin may run before us.
+            return ProtectionHelper::isProtectedRequest($app, $params)
+                || ProtectionHelper::needsRenderCheck($app, $params)
+                || $this->isUngatedFeed($app, $params)
+                || $this->isContentFeed($app, $params);
         } catch (\Throwable $e) {
             return false;
         }

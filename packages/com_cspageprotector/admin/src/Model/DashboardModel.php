@@ -253,7 +253,7 @@ final class DashboardModel extends BaseDatabaseModel
      *
      * @return  string[]
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private function getInactiveItems(array $ids): array
     {

@@ -101,15 +101,22 @@ final class BotVerifier
         $ipKey     = 'bot_ip_' . hash('sha256', $ip . '|' . implode(',', $suffixes));
         $prefixKey = 'bot_net_' . hash('sha256', self::networkPrefix($ip) . '|' . implode(',', $suffixes));
 
-        $cached = $cache->get($ipKey);
+        // A cache backend that is down (Redis, Memcached) throws here. Without
+        // the cache there's no lookup budget either, so the visitor is simply
+        // not a verified crawler and gets the normal check (fail closed).
+        try {
+            $cached = $cache->get($ipKey);
 
-        if ($cached === '1' || $cached === '0') {
-            return $cached === '1';
-        }
+            if ($cached === '1' || $cached === '0') {
+                return $cached === '1';
+            }
 
-        // A failure is remembered for the whole /24 (IPv4) or /64 (IPv6), so
-        // rotating through addresses in one block doesn't buy fresh lookups.
-        if ($cache->get($prefixKey) === '0') {
+            // A failure is remembered for the whole /24 (IPv4) or /64 (IPv6), so
+            // rotating through addresses in one block doesn't buy fresh lookups.
+            if ($cache->get($prefixKey) === '0') {
+                return false;
+            }
+        } catch (\Throwable $e) {
             return false;
         }
 
@@ -150,16 +157,18 @@ final class BotVerifier
      */
     private static function takeLookupBudget(object $cache): bool
     {
-        $key  = 'bot_budget_' . intdiv(time(), 60);
-        $used = (int) $cache->get($key);
-
-        if ($used >= self::LOOKUPS_PER_MINUTE) {
-            return false;
-        }
+        $key = 'bot_budget_' . intdiv(time(), 60);
 
         try {
+            $used = (int) $cache->get($key);
+
+            if ($used >= self::LOOKUPS_PER_MINUTE) {
+                return false;
+            }
+
             $cache->store((string) ($used + 1), $key);
         } catch (\Throwable $e) {
+            // No working cache, no budget: no lookup.
             return false;
         }
 

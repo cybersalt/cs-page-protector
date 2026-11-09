@@ -15,6 +15,7 @@ namespace Cybersalt\Component\Cspageprotector\Administrator\Helper;
 use Joomla\CMS\Application\CMSApplicationInterface;
 use Joomla\CMS\Cache\CacheControllerFactoryInterface;
 use Joomla\CMS\Component\ComponentHelper;
+use Joomla\CMS\Extension\ExtensionHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\LanguageHelper;
 use Joomla\CMS\Log\Log;
@@ -64,7 +65,7 @@ final class ProtectionHelper
      * One "Also protect these views" entry: component:view, lower case.
      *
      * @var    string
-     * @since  __DEPLOY_VERSION__
+     * @since  0.3.0
      */
     public const VIEW_ENTRY_PATTERN = '/^com_[a-z0-9_]+:[a-z0-9_.-]+$/';
 
@@ -74,7 +75,7 @@ final class ProtectionHelper
      * resetting a password, privacy consent, front-end site settings).
      *
      * @var    string[]
-     * @since  __DEPLOY_VERSION__
+     * @since  0.3.0
      */
     private const RESERVED_VIEW_OPTIONS = ['com_users', 'com_config', 'com_privacy'];
 
@@ -84,7 +85,7 @@ final class ProtectionHelper
      * answer a check on.
      *
      * @var    string
-     * @since  __DEPLOY_VERSION__
+     * @since  0.3.0
      */
     private const RESERVED_VIEW_PATTERN = '/(notify|notification|callback|webhook|postback|response|vmplg|checkout|payment|^ipn|ipn$)/';
 
@@ -94,7 +95,7 @@ final class ProtectionHelper
      * may still turn it into one), so such a request is treated as protected.
      *
      * @var    string[]
-     * @since  __DEPLOY_VERSION__
+     * @since  0.3.0
      */
     private const SINGLE_VALUE_KEYS = ['option', 'view', 'id', 'Itemid', 'task', 'controller', 'layout', 'format'];
 
@@ -106,7 +107,7 @@ final class ProtectionHelper
      * ever vouches for it.
      *
      * @var    string
-     * @since  __DEPLOY_VERSION__
+     * @since  0.3.0
      */
     private const UNKNOWN_VIEW = '?';
 
@@ -116,7 +117,7 @@ final class ProtectionHelper
      * (see RECORD_KEY_PATTERN).
      *
      * @var    string[]
-     * @since  __DEPLOY_VERSION__
+     * @since  0.3.0
      */
     private const ID_ONLY_COMPONENTS = ['com_content', 'com_contact', 'com_newsfeeds', 'com_tags'];
 
@@ -126,15 +127,75 @@ final class ProtectionHelper
      * campaign tags.
      *
      * @var    string
-     * @since  __DEPLOY_VERSION__
+     * @since  0.3.0
      */
-    private const RECORD_KEY_PATTERN = '/^(?:id|ids|cid|uid|pid|aid|a_id|catid|slug|alias|username|user|userid|memberid|profileid|productid|itemid|articleid|eventid|orderid|postid|uuid|guid)$|_(?:id|ids|uid|uuid|slug|alias|username)$|^id_/i';
+    private const RECORD_KEY_PATTERN = '/^(?:id|ids|pk|cid|uid|pid|aid|a_id|catid|slug|alias|username|user|userid|memberid|profileid|productid|itemid|articleid|eventid|orderid|postid|uuid|guid)$|_(?:id|ids|uid|uuid|slug|alias|username)$|^id_/i';
+
+    /**
+     * Ad, affiliate and campaign link parameters (Facebook, Google, LinkedIn,
+     * Microsoft and Adobe ads, Mailchimp, affiliate networks). Some end in
+     * "_id", but they pick no record: in a request they don't count as record
+     * keys unless a menu item of the same component carries that name in its
+     * link (then the component really picks records by it).
+     *
+     * @var    string[]
+     * @since  0.3.0
+     */
+    private const TRACKING_KEYS = [
+        'campaign_id', 'adset_id', 'ad_id', 'adgroup_id', 'ad_group_id', 'creative_id', 'placement_id', 'keyword_id',
+        'li_fat_id', 'ef_id', 'aff_id', 'affiliate_id', 'click_id', 'sub_id', 'fb_action_ids',
+        'gclid', 'gbraid', 'wbraid', 'dclid', 'msclkid', 'fbclid', 'ttclid', 'twclid', 'yclid', 'srsltid',
+        'mc_cid', 'mc_eid', '_ga', '_gl', 'ref',
+    ];
+
+    /**
+     * How many controller files, and how large, componentHasMethod() reads
+     * per request. Beyond that a method counts as not found (fail closed).
+     *
+     * @since  0.3.0
+     */
+    private const METHOD_SCAN_MAX_FILES = 100;
+
+    /**
+     * @see    METHOD_SCAN_MAX_FILES
+     * @since  0.3.0
+     */
+    private const METHOD_SCAN_MAX_BYTES = 1048576;
+
+    /**
+     * Memoised "option:method" => found, see componentHasMethod().
+     *
+     * @var    array<string, bool>
+     * @since  0.3.0
+     */
+    private static array $componentMethods = [];
+
+    /**
+     * Memoised md5 of each protected article's intro text => true, see
+     * isProtectedIntroText().
+     *
+     * @var    array<string, bool>|null
+     * @since  0.3.0
+     */
+    private static ?array $protectedIntroHashes = null;
+
+    /**
+     * Function and method names that call code the source reader can't
+     * follow (see methodRendering()).
+     *
+     * @var    string[]
+     * @since  0.3.0
+     */
+    private const INDIRECT_CALLS = [
+        'call_user_func', 'call_user_func_array', 'forward_static_call', 'forward_static_call_array',
+        'fromcallable', 'invoke', 'invokeargs', '__invoke',
+    ];
 
     /**
      * BaseController methods that change the task map.
      *
      * @var    string[]
-     * @since  __DEPLOY_VERSION__
+     * @since  0.3.0
      */
     private const TASK_CALLS = ['registertask', 'unregistertask', 'registerdefaulttask'];
 
@@ -145,7 +206,7 @@ final class ProtectionHelper
      * com_contact renders its custom fields into the contact email).
      *
      * @var    string[]
-     * @since  __DEPLOY_VERSION__
+     * @since  0.3.0
      */
     private const RENDER_CALLS = ['display', 'getview', 'createview'];
 
@@ -156,7 +217,7 @@ final class ProtectionHelper
      * com_content also has its own list and feed gate (getContentTargets()).
      *
      * @var    array<string, array{view: string, table: string}>
-     * @since  __DEPLOY_VERSION__
+     * @since  0.3.0
      */
     private const CATEGORY_COMPONENTS = [
         'com_content'   => ['view' => 'article', 'table' => '#__content'],
@@ -179,6 +240,17 @@ final class ProtectionHelper
      * @since  0.1.0
      */
     private static ?bool $accessMemo = null;
+
+    /**
+     * Set by computeProtected() when the request was let through as a real
+     * task (a callback, a form submit) in a component that has something
+     * protected (or, in "every page except" mode, as a task sent to an
+     * excluded page). See needsRenderCheck().
+     *
+     * @var    boolean
+     * @since  0.3.0
+     */
+    private static bool $renderCheck = false;
 
     /**
      * Module ids protected in Options.
@@ -252,7 +324,7 @@ final class ProtectionHelper
      *
      * @return  string[]
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     public static function getProtectedViews(Registry $params): array
     {
@@ -282,7 +354,7 @@ final class ProtectionHelper
      *
      * @return  array{valid: string[], invalid: string[], reserved: string[], unchecked: string[]}
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     public static function parseViewList(string $text): array
     {
@@ -337,7 +409,7 @@ final class ProtectionHelper
      *
      * @return  string
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     public static function asciiLower(string $text): string
     {
@@ -353,7 +425,7 @@ final class ProtectionHelper
      *
      * @return  string
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     public static function normaliseName(string $name): string
     {
@@ -371,7 +443,7 @@ final class ProtectionHelper
      *
      * @return  string|null
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     public static function singleValue(Input $input, string $key, string $filter = 'cmd', string $default = ''): ?string
     {
@@ -558,6 +630,189 @@ final class ProtectionHelper
     }
 
     /**
+     * Was this request let through only because it looked like a real task?
+     *
+     * A task that runs a method other than display() is treated as a callback
+     * or a form submit and left open (see resolveView()). Which page a task
+     * method shows is read from its source code, and no reading of code can
+     * be complete: a method may still reach display() in a way the reader
+     * doesn't follow. So when such a request is in a component that has
+     * something protected (or, in "every page except" mode, was excluded
+     * only because it was sent to an excluded page), the plugin checks what
+     * it actually produced: an HTML page for a visitor without a pass is
+     * replaced by the check (render-time safety net). Callbacks that
+     * redirect, exit, or answer in another format are not affected.
+     *
+     * Never set for com_users, com_config and com_privacy (logging in,
+     * registering, resetting a password, consent) or for tasks named like
+     * payment returns and callbacks (RESERVED_VIEW_PATTERN), which a payment
+     * provider can't answer a check on.
+     *
+     * @param   CMSApplicationInterface  $app     The application.
+     * @param   Registry                 $params  Component params.
+     *
+     * @return  boolean
+     *
+     * @since   0.3.0
+     */
+    public static function needsRenderCheck(CMSApplicationInterface $app, Registry $params): bool
+    {
+        self::isProtectedRequest($app, $params);
+
+        return self::$renderCheck;
+    }
+
+    /**
+     * May the render-time safety net (needsRenderCheck()) apply to a task in
+     * this component? Not for the components that must stay reachable, and
+     * not for tasks named like payment returns and callbacks.
+     *
+     * @param   CMSApplicationInterface  $app     The application.
+     * @param   Input                    $input   The request input.
+     * @param   string                   $option  Request component, lower case.
+     *
+     * @return  boolean
+     *
+     * @since   0.3.0
+     */
+    private static function renderCheckApplies(CMSApplicationInterface $app, Input $input, string $option): bool
+    {
+        if (\in_array($option, self::RESERVED_VIEW_OPTIONS, true)) {
+            return false;
+        }
+
+        // ComponentDispatcher::dispatch(): "controller.method", else the
+        // `controller` value and the task as the method.
+        $task       = (string) self::singleValue($input, 'task');
+        $parts      = str_contains($task, '.') ? explode('.', $task) : [(string) self::singleValue($input, 'controller'), $task];
+        $controller = self::normaliseName($parts[0]);
+        $reserved   = false;
+
+        foreach ([$controller, self::normaliseName((string) ($parts[1] ?? ''))] as $name) {
+            if ($name !== '' && preg_match(self::RESERVED_VIEW_PATTERN, $name)) {
+                $reserved = true;
+            }
+        }
+
+        if (!$reserved) {
+            return true;
+        }
+
+        // An older component's controller falls back to display() on a task
+        // it doesn't know, so `task=payment` would show its default view.
+        // There, the name only counts when such a method exists, under the
+        // name the controller looks up: `noti-fy` isn't `notify`.
+        return self::controllerClass($app, $option, $controller !== '' ? $controller : 'display') === null
+            && !self::componentHasMethod($option, self::asciiLower((string) ($parts[1] ?? '')));
+    }
+
+    /**
+     * Does an older component's controller have a task method of this name:
+     * a public method of a class in a file that holds its controllers? Read
+     * from the files, never run. Helpers and models with the same method
+     * name don't count. Anything that can't be read counts as no.
+     *
+     * @param   string  $option  Component, lower case.
+     * @param   string  $method  Method name as the controller looks it up, lower case.
+     *
+     * @return  boolean
+     *
+     * @since   0.3.0
+     */
+    private static function componentHasMethod(string $option, string $method): bool
+    {
+        if (!preg_match('/^[a-z0-9_]+$/', $method) || !preg_match('/^com_[a-z0-9_]+$/', $option)) {
+            return false;
+        }
+
+        $key = $option . ':' . $method;
+
+        if (isset(self::$componentMethods[$key])) {
+            return self::$componentMethods[$key];
+        }
+
+        $found = false;
+
+        try {
+            $folder = JPATH_SITE . '/components/' . $option;
+            $files  = array_merge(
+                glob($folder . '/controller.php') ?: [],
+                glob($folder . '/controller.*.php') ?: [],
+                glob($folder . '/controller/*.php') ?: [],
+                glob($folder . '/controllers/*.php') ?: []
+            );
+
+            foreach (\array_slice($files, 0, self::METHOD_SCAN_MAX_FILES) as $file) {
+                if ((int) filesize($file) <= self::METHOD_SCAN_MAX_BYTES && self::fileHasPublicMethod($file, $method)) {
+                    $found = true;
+
+                    break;
+                }
+            }
+        } catch (\Throwable $e) {
+            $found = false;
+        }
+
+        return self::$componentMethods[$key] = $found;
+    }
+
+    /**
+     * Does a class in this file declare a public method of this name?
+     *
+     * @param   string  $file    File path.
+     * @param   string  $method  Method name, lower case.
+     *
+     * @return  boolean
+     *
+     * @since   0.3.0
+     */
+    private static function fileHasPublicMethod(string $file, string $method): bool
+    {
+        $tokens     = self::fileTokens($file) ?? [];
+        $depth      = 0;
+        $classDepth = null;
+        $inClass    = false;
+
+        foreach ($tokens as $i => $token) {
+            $id = \is_array($token) ? $token[0] : $token;
+
+            if ($id === T_CLASS && !\in_array(\is_array($tokens[$i - 1] ?? null) ? $tokens[$i - 1][0] : null, [T_DOUBLE_COLON, T_NEW], true)) {
+                $inClass = true;
+            } elseif ($id === '{' || $id === T_CURLY_OPEN || $id === T_DOLLAR_OPEN_CURLY_BRACES) {
+                if ($inClass && $classDepth === null) {
+                    $classDepth = $depth;
+                }
+
+                $inClass = false;
+                $depth++;
+            } elseif ($id === '}') {
+                $depth--;
+
+                if ($depth === $classDepth) {
+                    $classDepth = null;
+                }
+            } elseif ($id === T_FUNCTION && $classDepth !== null && $depth === $classDepth + 1) {
+                $name = $tokens[$i + 1] ?? null;
+                $name = \is_array($name) && $name[1] === '&' || $name === '&' ? ($tokens[$i + 2] ?? null) : $name;
+
+                if (!\is_array($name) || self::asciiLower($name[1]) !== $method) {
+                    continue;
+                }
+
+                for ($j = $i - 1; \is_array($tokens[$j] ?? null) && \in_array($tokens[$j][0], [T_PUBLIC, T_PROTECTED, T_PRIVATE, T_STATIC, T_ABSTRACT, T_FINAL], true); $j--) {
+                    if (\in_array($tokens[$j][0], [T_PROTECTED, T_PRIVATE], true)) {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Id of the menu item the router resolved for this request.
      *
      * @param   CMSApplicationInterface  $app  The application.
@@ -588,7 +843,7 @@ final class ProtectionHelper
      *
      * @return  int[]
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     public static function getProtectedMenuItemIds(Registry $params): array
     {
@@ -607,7 +862,7 @@ final class ProtectionHelper
      *
      * @return  int[]
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     public static function withRelatedItems(array $ids): array
     {
@@ -665,7 +920,7 @@ final class ProtectionHelper
      * Memoised withRelatedItems() results, keyed by the given ids.
      *
      * @var    array<string, int[]>
-     * @since  __DEPLOY_VERSION__
+     * @since  0.3.0
      */
     private static array $associationMemo = [];
 
@@ -802,12 +1057,59 @@ final class ProtectionHelper
 
         $request = self::describeRequest($app, $option);
 
+        // A real task (a callback, a form submit): no rule matches it. If it
+        // shows an HTML page all the same, the plugin replaces that page with
+        // the check after dispatch (render-time safety net).
+        if ($request['view'] === null) {
+            self::$renderCheck = self::renderCheckApplies($app, $input, $option);
+
+            return false;
+        }
+
         // "Also protect these views": whatever the Itemid, or none.
         if ($views !== [] && self::matchesProtectedView($app, $request, $views)) {
             return true;
         }
 
-        return $protected !== [] && self::matchesProtectedContent($app, $protected, $request);
+        if ($protected !== [] && self::matchesProtectedContent($app, $protected, $request)) {
+            return true;
+        }
+
+        if (self::isUnreadableTask($app, $input, $option)) {
+            self::$renderCheck = self::renderCheckApplies($app, $input, $option);
+        }
+
+        return false;
+    }
+
+    /**
+     * A task or a named controller in a component whose controllers can't be
+     * read (an older component picks them in its own entry file). resolveView()
+     * goes by `view` there, which the router fills in from the menu item and
+     * a request can add, but what the task shows may be anything: a public
+     * `view` says nothing about it. Such a request gets the render-time
+     * safety net (see needsRenderCheck()).
+     *
+     * @param   CMSApplicationInterface  $app     The application.
+     * @param   Input                    $input   The request input.
+     * @param   string                   $option  Request component, lower case.
+     *
+     * @return  boolean
+     *
+     * @since   0.3.0
+     */
+    private static function isUnreadableTask(CMSApplicationInterface $app, Input $input, string $option): bool
+    {
+        $task   = (string) self::singleValue($input, 'task');
+        $parts  = str_contains($task, '.') ? explode('.', $task) : [(string) self::singleValue($input, 'controller'), $task];
+        $name   = self::normaliseName($parts[0]);
+        $method = self::asciiLower((string) ($parts[1] ?? ''));
+
+        if (\in_array($method, ['', 'display'], true) && \in_array($name, ['', 'display'], true)) {
+            return false;
+        }
+
+        return self::controllerClass($app, $option, $name !== '' ? $name : 'display') === null;
     }
 
     /**
@@ -819,7 +1121,7 @@ final class ProtectionHelper
      *
      * @return  int[]
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function itemsOfComponent(CMSApplicationInterface $app, array $ids, string $option): array
     {
@@ -845,7 +1147,7 @@ final class ProtectionHelper
      *
      * @return  string[]
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function arrayKeys(Input $input, ?string $option): array
     {
@@ -880,7 +1182,7 @@ final class ProtectionHelper
      *
      * @return  int[]|null
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function tagIds($value): ?array
     {
@@ -931,7 +1233,7 @@ final class ProtectionHelper
      *
      * @return  int[]
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function linkIds(string $option, array $query): array
     {
@@ -951,7 +1253,7 @@ final class ProtectionHelper
      *
      * @return  int[]
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function requestIds(array $request): array
     {
@@ -970,7 +1272,7 @@ final class ProtectionHelper
      *
      * @return  boolean
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function sameIds(array $a, array $b): bool
     {
@@ -987,7 +1289,7 @@ final class ProtectionHelper
      *
      * @return  boolean
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function isRecordKey(string $name): bool
     {
@@ -1003,7 +1305,7 @@ final class ProtectionHelper
      *
      * @return  array<string, mixed>
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function recordKeys(string $option, array $values): array
     {
@@ -1025,16 +1327,19 @@ final class ProtectionHelper
     }
 
     /**
-     * The record keys of the request (see recordKeys()).
+     * The record keys of the request (see recordKeys()). Ad, affiliate and
+     * campaign parameters (TRACKING_KEYS) only count when a menu item of the
+     * component carries that name in its link.
      *
-     * @param   Input   $input   The request input.
-     * @param   string  $option  Request component, lower case.
+     * @param   CMSApplicationInterface  $app     The application.
+     * @param   Input                    $input   The request input.
+     * @param   string                   $option  Request component, lower case.
      *
      * @return  array<string, mixed>
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
-    private static function requestRecordKeys(Input $input, string $option): array
+    private static function requestRecordKeys(CMSApplicationInterface $app, Input $input, string $option): array
     {
         if (\in_array($option, self::ID_ONLY_COMPONENTS, true)) {
             return [];
@@ -1045,12 +1350,85 @@ final class ProtectionHelper
         foreach (array_keys((array) $input->getArray()) as $name) {
             $name = (string) $name;
 
-            if ($name !== 'id' && self::isRecordKey($name)) {
-                $values[$name] = $input->get($name, null, 'raw');
+            if ($name === 'id' || !self::isRecordKey($name)) {
+                continue;
             }
+
+            if (self::isTrackingKey($name)) {
+                $linkKeys = self::componentLinkKeys($app, $option);
+
+                if ($linkKeys !== null && !\in_array(self::asciiLower($name), $linkKeys, true)) {
+                    continue;
+                }
+            }
+
+            $values[$name] = $input->get($name, null, 'raw');
         }
 
         return $values;
+    }
+
+    /**
+     * Is this an ad, affiliate or campaign parameter (see TRACKING_KEYS)?
+     *
+     * @param   string  $name  Request key.
+     *
+     * @return  boolean
+     *
+     * @since   0.3.0
+     */
+    private static function isTrackingKey(string $name): bool
+    {
+        return \in_array(self::asciiLower($name), self::TRACKING_KEYS, true);
+    }
+
+    /**
+     * Memoised componentLinkKeys() results, keyed by option.
+     *
+     * @var    array<string, string[]|null>
+     * @since  0.3.0
+     */
+    private static array $componentLinkKeys = [];
+
+    /**
+     * Every key (lower case) the site's menu item links of this component
+     * carry. Null when the menu can't be read: every tracking parameter then
+     * counts as a record key (fail closed).
+     *
+     * @param   CMSApplicationInterface  $app     The application.
+     * @param   string                   $option  Component, lower case.
+     *
+     * @return  string[]|null
+     *
+     * @since   0.3.0
+     */
+    private static function componentLinkKeys(CMSApplicationInterface $app, string $option): ?array
+    {
+        if (\array_key_exists($option, self::$componentLinkKeys)) {
+            return self::$componentLinkKeys[$option];
+        }
+
+        $keys = [];
+
+        try {
+            if (!method_exists($app, 'getMenu')) {
+                return self::$componentLinkKeys[$option] = null;
+            }
+
+            foreach ((array) $app->getMenu()->getMenu() as $item) {
+                $query = \is_object($item) ? (array) ($item->query ?? []) : [];
+
+                if (self::asciiLower(self::queryString($query, 'option')) === $option) {
+                    foreach (array_keys($query) as $key) {
+                        $keys[] = self::asciiLower((string) $key);
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            return self::$componentLinkKeys[$option] = null;
+        }
+
+        return self::$componentLinkKeys[$option] = array_values(array_unique($keys));
     }
 
     /**
@@ -1060,7 +1438,7 @@ final class ProtectionHelper
      *
      * @return  boolean
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function isIdKey(string $name): bool
     {
@@ -1074,7 +1452,7 @@ final class ProtectionHelper
      *
      * @return  integer|null
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function cleanId(string $value): ?int
     {
@@ -1091,7 +1469,7 @@ final class ProtectionHelper
      *
      * @return  boolean
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function sameValue(string $key, $a, $b): bool
     {
@@ -1126,7 +1504,7 @@ final class ProtectionHelper
      *
      * @return  boolean
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function mayBeSame(string $key, $a, $b): bool
     {
@@ -1161,7 +1539,7 @@ final class ProtectionHelper
      *
      * @return  array{option: string, view: ?string, id: int, ids: int[]|null, keys: array<string, mixed>}
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function describeRequest(CMSApplicationInterface $app, string $option): array
     {
@@ -1179,7 +1557,7 @@ final class ProtectionHelper
             ),
             'id'     => $ids !== null ? (\count($ids) === 1 ? $ids[0] : 0) : (int) (self::singleValue($input, 'id', 'int', '0') ?? 0),
             'ids'    => $ids,
-            'keys'   => self::requestRecordKeys($input, $option),
+            'keys'   => self::requestRecordKeys($app, $input, $option),
         ];
     }
 
@@ -1194,10 +1572,14 @@ final class ProtectionHelper
      *   back to the default task, display();
      * - a task that runs a method other than display() is a real task (a
      *   form submit, a payment callback, an AJAX call) unless the method
-     *   renders a page itself (see methodRendering()): then the request is
-     *   that page;
+     *   renders a page itself, or may (see methodRendering()): then the
+     *   request is that page. A controller with its own execute() may run
+     *   another method than its task map says, so its tasks other than
+     *   display are a page of unknown view;
      * - display() shows `view`, or with no `view` the view named after the
-     *   controller.
+     *   controller. A third-party DisplayController's own display() is only
+     *   trusted to show `view` when its code plainly does (see
+     *   displayKeepsView()).
      *
      * The result is null for a real task that shows no page of its own, so
      * the view rules never touch those. It is '' when the page is the
@@ -1218,7 +1600,7 @@ final class ProtectionHelper
      *
      * @return  string|null
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     public static function resolveView(CMSApplicationInterface $app, string $option, string $view, string $task, string $controller): ?string
     {
@@ -1236,17 +1618,28 @@ final class ProtectionHelper
             $named  = $controller !== '';
         }
 
-        $method     = self::asciiLower($method);
-        $controller = self::normaliseName($controller);
+        // The dispatcher hands the task and the controller name to the
+        // controller as they were sent; execute() looks the task up in lower
+        // case (review 4 L2).
+        $sentTask       = $method;
+        $sentController = $controller;
+        $method         = self::asciiLower($method);
+        $controller     = self::normaliseName($controller);
 
         // A controller other than the component's DisplayController, named in
         // the request (`task=profile.display`, `controller=profile`).
         $custom = $named && $controller !== 'display';
-        $class  = $method === 'display' && $view !== '' && !$custom ? null : self::controllerClass($app, $option, $named ? $controller : 'display');
+        $class  = self::controllerClass($app, $option, $named ? $controller : 'display');
 
         if ($class !== null && $method !== 'display') {
+            // An execute() of its own may run another method than the task
+            // map says (a GET to a callback task shown as a page): unknown.
+            if (self::declaresOwn($class, 'execute')) {
+                return self::UNKNOWN_VIEW;
+            }
+
             // The method BaseController::execute() will run for this task.
-            $target = self::taskTarget($app, $option, $class, $named ? $controller : '', $method);
+            $target = self::taskTarget($app, $option, $class, $named ? $controller : '', $method, $sentTask, $named ? $sentController : '');
 
             if ($target === null) {
                 return self::UNKNOWN_VIEW;
@@ -1279,6 +1672,14 @@ final class ProtectionHelper
         // DisplayController's own display() keeps the request's view (core
         // components all have one, and they show `view`).
         if ($custom && $class !== null && self::hasOwnDisplay($class)) {
+            return '';
+        }
+
+        // A third-party DisplayController's own display() may show another
+        // view than `view` (old view names mapped onto new ones): unless its
+        // code plainly keeps the request's view, the view is unknown (review
+        // 4 L1). Core components' display() show `view`.
+        if ($view !== '' && $class !== null && !$custom && !self::displayKeepsView($option, $class)) {
             return '';
         }
 
@@ -1320,7 +1721,7 @@ final class ProtectionHelper
      * Memoised controller class lookups, keyed "option:name".
      *
      * @var    array<string, string|null>
-     * @since  __DEPLOY_VERSION__
+     * @since  0.3.0
      */
     private static array $controllerClasses = [];
 
@@ -1328,7 +1729,7 @@ final class ProtectionHelper
      * The component MVC factories found by controllerClass(), keyed by option.
      *
      * @var    array<string, MVCFactory>
-     * @since  __DEPLOY_VERSION__
+     * @since  0.3.0
      */
     private static array $factories = [];
 
@@ -1344,7 +1745,7 @@ final class ProtectionHelper
      *
      * @return  string|null
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function controllerClass(CMSApplicationInterface $app, string $option, string $name): ?string
     {
@@ -1389,15 +1790,63 @@ final class ProtectionHelper
      *
      * @return  boolean
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function hasOwnDisplay(string $class): bool
     {
+        return self::declaresOwn($class, 'display');
+    }
+
+    /**
+     * Does this controller (or one of its parents other than BaseController)
+     * declare this method itself? Unreadable counts as yes.
+     *
+     * @param   string  $class   Controller class.
+     * @param   string  $method  Method name.
+     *
+     * @return  boolean
+     *
+     * @since   0.3.0
+     */
+    private static function declaresOwn(string $class, string $method): bool
+    {
         try {
-            return (new \ReflectionMethod($class, 'display'))->getDeclaringClass()->getName() !== BaseController::class;
+            return (new \ReflectionMethod($class, $method))->getDeclaringClass()->getName() !== BaseController::class;
         } catch (\ReflectionException $e) {
             return true;
         }
+    }
+
+    /**
+     * Does the component's DisplayController show the request's `view`?
+     * BaseController::display() does, and so do core components' own
+     * display() methods. A third-party display() of its own does only when
+     * its code plainly calls display() without changing the view (see
+     * methodRendering()); one that writes the view (old view names mapped
+     * onto new ones), picks a view object itself or can't be read doesn't.
+     *
+     * @param   string  $option  Component, lower case.
+     * @param   string  $class   The DisplayController class.
+     *
+     * @return  boolean
+     *
+     * @since   0.3.0
+     */
+    private static function displayKeepsView(string $option, string $class): bool
+    {
+        if (!self::hasOwnDisplay($class)) {
+            return true;
+        }
+
+        try {
+            if (ExtensionHelper::checkIfCoreExtension('component', $option, 1) && str_starts_with($class, 'Joomla\\Component\\')) {
+                return true;
+            }
+        } catch (\Throwable $e) {
+            // Not known to be core: read it.
+        }
+
+        return self::methodRendering($class, 'display') === '';
     }
 
     /**
@@ -1407,7 +1856,7 @@ final class ProtectionHelper
      *
      * @return  string[]|null
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function baseControllerMethods(): ?array
     {
@@ -1434,7 +1883,7 @@ final class ProtectionHelper
      * Memoised baseControllerMethods() result.
      *
      * @var    string[]|null
-     * @since  __DEPLOY_VERSION__
+     * @since  0.3.0
      */
     private static ?array $baseControllerMethods = null;
 
@@ -1453,14 +1902,16 @@ final class ProtectionHelper
      * @param   CMSApplicationInterface  $app     The application.
      * @param   string                   $option  Component, lower case.
      * @param   string                   $class   Controller class.
-     * @param   string                   $name    Controller name from the request ('' for the DisplayController).
-     * @param   string                   $task    Task (the method part), lower case.
+     * @param   string                   $name            Controller name from the request ('' for the DisplayController).
+     * @param   string                   $task            Task (the method part), lower case.
+     * @param   string                   $sentTask        The method part as sent (the dispatcher passes it unchanged).
+     * @param   string                   $sentController  The controller name as sent ('' for the DisplayController).
      *
      * @return  string|null
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
-    private static function taskTarget(CMSApplicationInterface $app, string $option, string $class, string $name, string $task): ?string
+    private static function taskTarget(CMSApplicationInterface $app, string $option, string $class, string $name, string $task, string $sentTask, string $sentController): ?string
     {
         $read = self::staticTaskMap($class);
 
@@ -1474,7 +1925,7 @@ final class ProtectionHelper
             }
         }
 
-        $live = self::liveTaskMap($app, $option, $class, $name, $task);
+        $live = self::liveTaskMap($app, $option, $class, $name, $sentTask, $sentController);
 
         if ($live === null) {
             return null;
@@ -1487,7 +1938,7 @@ final class ProtectionHelper
      * Memoised readTaskMap() results, keyed by class.
      *
      * @var    array<string, array{map: array<string, string>, unsure: string[], all: bool}|null>
-     * @since  __DEPLOY_VERSION__
+     * @since  0.3.0
      */
     private static array $taskMaps = [];
 
@@ -1498,7 +1949,7 @@ final class ProtectionHelper
      *
      * @return  array{map: array<string, string>, unsure: string[], all: bool}|null
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function staticTaskMap(string $class): ?array
     {
@@ -1545,7 +1996,7 @@ final class ProtectionHelper
      *
      * @return  array{map: array<string, string>, unsure: string[], all: bool}|null
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function readTaskMap(string $class, array $base): ?array
     {
@@ -1669,6 +2120,15 @@ final class ProtectionHelper
                     continue;
                 }
 
+                // \call_user_func(…) and the like, written with a namespace.
+                if (\in_array($token[0], [T_NAME_FULLY_QUALIFIED, T_NAME_QUALIFIED, T_NAME_RELATIVE], true)) {
+                    if ($next === '(' && \in_array(self::asciiLower(substr($token[1], (int) strrpos($token[1], '\\') + 1)), self::INDIRECT_CALLS, true)) {
+                        $all = true;
+                    }
+
+                    continue;
+                }
+
                 if ($token[0] !== T_STRING) {
                     continue;
                 }
@@ -1689,7 +2149,7 @@ final class ProtectionHelper
                     continue;
                 }
 
-                if (\in_array($text, ['call_user_func', 'call_user_func_array', 'forward_static_call', 'forward_static_call_array'], true)) {
+                if (\in_array($text, self::INDIRECT_CALLS, true)) {
                     $all = true;
 
                     continue;
@@ -1730,7 +2190,7 @@ final class ProtectionHelper
      *
      * @return  array{calls: list<array{0: string, 1: string, 2: ?string}>, positions: int[]}|null
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function constructorTaskCalls(array $tokens, int $startLine, int $endLine): ?array
     {
@@ -1826,7 +2286,7 @@ final class ProtectionHelper
      *
      * @return  boolean
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function isParentConstructCall(array $statement): bool
     {
@@ -1848,7 +2308,7 @@ final class ProtectionHelper
      *
      * @return  list<array{0: int, 1: string, 2: string, 3: ?string}>|null  [position of the name, call, first, second]
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function taskCallChain(array $statement): ?array
     {
@@ -1906,7 +2366,7 @@ final class ProtectionHelper
      *
      * @return  string|null
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function taskNameToken($token, bool $task): ?string
     {
@@ -1923,7 +2383,7 @@ final class ProtectionHelper
      * Memoised fileTokens() results, keyed by file.
      *
      * @var    array<string, array|null>
-     * @since  __DEPLOY_VERSION__
+     * @since  0.3.0
      */
     private static array $fileTokens = [];
 
@@ -1935,7 +2395,7 @@ final class ProtectionHelper
      *
      * @return  array|null
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function fileTokens(string $file): ?array
     {
@@ -1978,7 +2438,7 @@ final class ProtectionHelper
      *
      * @return  array{0: int, 1: int}|null
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function functionBody(array $tokens, string $name, int $startLine, int $endLine): ?array
     {
@@ -2049,7 +2509,7 @@ final class ProtectionHelper
      * Memoised liveTaskMap() results, keyed "class|task".
      *
      * @var    array<string, array<string, string>|null>
-     * @since  __DEPLOY_VERSION__
+     * @since  0.3.0
      */
     private static array $liveTaskMaps = [];
 
@@ -2066,16 +2526,17 @@ final class ProtectionHelper
      * @param   CMSApplicationInterface  $app     The application.
      * @param   string                   $option  Component, lower case.
      * @param   string                   $class   Controller class.
-     * @param   string                   $name    Controller name from the request ('' for the DisplayController).
-     * @param   string                   $task    Task, lower case.
+     * @param   string                   $name            Controller name, normalised ('' for the DisplayController).
+     * @param   string                   $task            The task (method part) as sent: the dispatcher doesn't change its case.
+     * @param   string                   $sentController  The controller name as sent ('' for the DisplayController).
      *
      * @return  array<string, string>|null  Lower-case task => lower-case method.
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
-    private static function liveTaskMap(CMSApplicationInterface $app, string $option, string $class, string $name, string $task): ?array
+    private static function liveTaskMap(CMSApplicationInterface $app, string $option, string $class, string $name, string $task, string $sentController = ''): ?array
     {
-        $key = $class . '|' . $task;
+        $key = $class . '|' . $sentController . '|' . $task;
 
         if (\array_key_exists($key, self::$liveTaskMaps)) {
             return self::$liveTaskMaps[$key];
@@ -2097,7 +2558,7 @@ final class ProtectionHelper
                 $copy->set('task', $task);
 
                 if ($name !== '') {
-                    $copy->set('controller', $name);
+                    $copy->set('controller', $sentController !== '' ? $sentController : $name);
                     $config['name'] = $name;
                 }
 
@@ -2134,7 +2595,7 @@ final class ProtectionHelper
      * Memoised methodRendering() results, keyed "class::method".
      *
      * @var    array<string, string|null>
-     * @since  __DEPLOY_VERSION__
+     * @since  0.3.0
      */
     private static array $renderings = [];
 
@@ -2144,17 +2605,26 @@ final class ProtectionHelper
      * deep), never run:
      *
      * - null: it shows no page (no display(), getView(), createView() or
-     *   new …View): a real task, such as a form submit, a redirect, a
-     *   payment callback or a JSON answer;
-     * - a view name: it sets `view` to a plain quoted name
-     *   (`$this->input->set('view', 'member')`) as a statement of its own at
-     *   the top of the method, before it calls `$this->display()` (or
-     *   parent::/self::/static::display()), and sets no other view;
+     *   new …View) and every call it makes was followed: a real task, such
+     *   as a form submit, a redirect, a payment callback or a JSON answer;
+     * - a view name: it sets `view` to a plain quoted name on the
+     *   controller's input (`$this->input->set('view', 'member')`, also
+     *   through `$this->app` or `Factory::getApplication()`) as a statement
+     *   of its own at the top of the method, before it calls
+     *   `$this->display()` (or parent::/self::/static::display()), and sets
+     *   no other view;
      * - '': it calls display() without changing the view, so the request's
      *   view is shown;
      * - UNKNOWN_VIEW: anything else that shows a page (a view object's
-     *   display(), getView(), new …View, a conditional or non-literal view,
-     *   or one of these in a method it calls).
+     *   display(), getView(), new …View, a conditional or non-literal view, a
+     *   `view` written on another object, or one of these in a method it
+     *   calls), and anything the reader can't follow (review 4 M1): another
+     *   task run through execute(), a dynamic or indirect call (`$this->$m()`,
+     *   `$f()`, call_user_func(), a `[$this, 'x']` callable), `$this` handed
+     *   to other code, or own calls more than four levels deep. Such a method
+     *   may reach display() in a way that can't be seen, so it is never taken
+     *   for a callback. (The plugin's render-time safety net still checks
+     *   what a "callback" actually produced, see needsRenderCheck().)
      *
      * @param   string   $class   Controller class.
      * @param   string   $method  Method name.
@@ -2163,7 +2633,7 @@ final class ProtectionHelper
      *
      * @return  string|null
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function methodRendering(string $class, string $method, int $depth = 0, array &$seen = []): ?string
     {
@@ -2196,7 +2666,7 @@ final class ProtectionHelper
      *
      * @return  string|null
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function readMethodRendering(string $class, string $method, int $depth, array &$seen): ?string
     {
@@ -2204,10 +2674,16 @@ final class ProtectionHelper
         $declaring  = $reflection->getDeclaringClass();
 
         if ($declaring->getName() === BaseController::class) {
-            // BaseController's display() shows the request's view; its other
-            // methods (setRedirect(), getModel(), checkToken()…) render
-            // nothing. getView() and createView() count where they're called.
-            return self::asciiLower($reflection->getName()) === 'display' ? '' : null;
+            // BaseController's display() shows the request's view, and
+            // execute() runs another task, which may show any page (review 4
+            // M1: `return $this->execute('display');`). Its other methods
+            // (setRedirect(), getModel(), checkToken()…) render nothing.
+            // getView() and createView() count where they're called.
+            return match (self::asciiLower($reflection->getName())) {
+                'display' => '',
+                'execute' => self::UNKNOWN_VIEW,
+                default   => null,
+            };
         }
 
         $seen[$declaring->getName() . '::' . self::asciiLower($method)] = true;
@@ -2230,8 +2706,10 @@ final class ProtectionHelper
         $depthInBody = 0;
 
         for ($i = $open + 1; $i < $close; $i++) {
-            $token = $tokens[$i];
-            $id    = \is_array($token) ? $token[0] : $token;
+            $token  = $tokens[$i];
+            $id     = \is_array($token) ? $token[0] : $token;
+            $next   = $tokens[$i + 1] ?? null;
+            $nextId = \is_array($next) ? $next[0] : $next;
 
             if ($id === '{' || $id === T_CURLY_OPEN || $id === T_DOLLAR_OPEN_CURLY_BRACES) {
                 $depthInBody++;
@@ -2245,43 +2723,93 @@ final class ProtectionHelper
                 continue;
             }
 
-            // new SomethingView(…)
-            if ($id === T_NEW) {
-                $next = $tokens[$i + 1] ?? null;
+            // A call the reader can't follow: a variable function or method
+            // (`$f()`, `$this->$m()`, `static::$m()`), `->{…}()`, or a call
+            // on a call result or an array element (`…)()`, `$a['x']()`).
+            if (
+                (($id === T_VARIABLE || $id === ')' || $id === ']') && $nextId === '(')
+                || (\in_array($id, [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON], true) && $nextId === '{')
+            ) {
+                $other = true;
 
-                if (\is_array($next) && preg_match('/view$/i', (string) $next[1])) {
+                continue;
+            }
+
+            // new SomethingView(…), and objects of a class named at run time
+            // or of this controller's own class (new $class, new static).
+            if ($id === T_NEW) {
+                if (
+                    (\is_array($next) && preg_match('/view$/i', (string) $next[1]))
+                    || \in_array($nextId, [T_VARIABLE, T_STATIC], true)
+                    || (\is_array($next) && $nextId === T_STRING && \in_array(self::asciiLower($next[1]), ['self', 'parent'], true))
+                ) {
                     $other = true;
                 }
 
                 continue;
             }
 
-            // $this->default_view = …, $this->name = …: display() would pick another view.
-            if ($id === T_VARIABLE && $token[1] === '$this' && \is_array($tokens[$i + 1] ?? null) && $tokens[$i + 1][0] === T_OBJECT_OPERATOR) {
-                $property = $tokens[$i + 2] ?? null;
+            if ($id === T_VARIABLE && $token[1] === '$this') {
+                // $this->default_view = …, $this->name = …: display() would pick another view.
+                if ($nextId === T_OBJECT_OPERATOR) {
+                    $property = $tokens[$i + 2] ?? null;
 
-                if (\is_array($property) && \in_array(self::asciiLower($property[1]), ['default_view', 'name'], true) && ($tokens[$i + 3] ?? null) === '=') {
-                    $viewUnknown = true;
+                    if (\is_array($property) && \in_array(self::asciiLower($property[1]), ['default_view', 'name'], true) && ($tokens[$i + 3] ?? null) === '=') {
+                        $viewUnknown = true;
+                    }
+
+                    continue;
                 }
 
+                $previous = $tokens[$i - 1] ?? null;
+
+                if (\in_array($nextId, [T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON, T_INSTANCEOF], true) || (\is_array($previous) && $previous[0] === T_RETURN)) {
+                    continue;
+                }
+
+                // $this handed to other code (an argument, a `[$this, 'x']`
+                // callable, another variable): that code may call display().
+                $other = true;
+
                 continue;
             }
 
-            if ($id !== T_STRING || ($tokens[$i + 1] ?? null) !== '(') {
+            if (!\in_array($id, [T_STRING, T_NAME_FULLY_QUALIFIED, T_NAME_QUALIFIED, T_NAME_RELATIVE], true) || $nextId !== '(') {
                 continue;
             }
 
-            $name     = self::asciiLower($token[1]);
+            $text = (string) $token[1];
+            $name = self::asciiLower(substr($text, (int) strrpos('\\' . $text, '\\')));
+
+            // call_user_func(), Closure::fromCallable(), ReflectionMethod::invoke()…
+            if (\in_array($name, self::INDIRECT_CALLS, true)) {
+                $other = true;
+
+                continue;
+            }
+
+            if ($id !== T_STRING) {
+                continue;
+            }
+
             $operator = $tokens[$i - 1] ?? null;
             $subject  = $tokens[$i - 2] ?? null;
             $arrow    = \is_array($operator) && \in_array($operator[0], [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR], true);
             $static   = \is_array($operator) && $operator[0] === T_DOUBLE_COLON;
             $onThis   = $arrow && \is_array($subject) && $subject[0] === T_VARIABLE && $subject[1] === '$this';
-            $scope    = $static && \is_array($subject) && $subject[0] === T_STRING ? self::asciiLower($subject[1]) : '';
-            $own      = $onThis || \in_array($scope, ['parent', 'self', 'static'], true);
+            $scope    = '';
 
-            // ->set('view', …) / ->def('view', …) on any input.
-            if ($arrow && \in_array($name, ['set', 'def'], true)) {
+            if ($static && \is_array($subject)) {
+                // static:: is a T_STATIC token, not a name (review 4 M1).
+                $scope = $subject[0] === T_STATIC ? 'static' : ($subject[0] === T_STRING ? self::asciiLower($subject[1]) : '');
+            }
+
+            $own = $onThis || \in_array($scope, ['parent', 'self', 'static'], true);
+
+            // ->set('view', …) / ->def('view', …): only a plain write on the
+            // controller's own input names the view; `view` written on any
+            // other object (a Registry, $this->input->post) is unknown.
+            if ($arrow && \in_array($name, ['set', 'def', 'setvar'], true)) {
                 $key = $tokens[$i + 2] ?? null;
 
                 if (!\is_array($key) || $key[0] !== T_CONSTANT_ENCAPSED_STRING) {
@@ -2289,11 +2817,11 @@ final class ProtectionHelper
                 } elseif (trim($key[1], '\'"') === 'view') {
                     $value = ($tokens[$i + 3] ?? null) === ',' ? self::taskNameToken($tokens[$i + 4] ?? null, false) : null;
 
-                    if ($name === 'set' && $value !== null && ($tokens[$i + 5] ?? null) === ')') {
-                        // A top-level statement of its own: `$x->…->set('view', 'name');`
+                    if ($name === 'set' && $value !== null && ($tokens[$i + 5] ?? null) === ')' && self::onControllerInput($tokens, $i, $open)) {
+                        // A top-level statement of its own: `$this->input->set('view', 'name');`
                         $topLevel = $depthInBody === 0 && ($tokens[$i + 6] ?? null) === ';' && self::startsStatement($tokens, $i, $open);
                         $views[]  = [$value, $topLevel, $i];
-                    } else {
+                    } elseif ($name !== 'set' || self::asciiLower($method) !== 'display' || !self::writesRequestViewBack($tokens, $i, $open, $close)) {
                         $viewUnknown = true;
                     }
                 }
@@ -2311,7 +2839,14 @@ final class ProtectionHelper
                 continue;
             }
 
-            if (!$own || $depth >= 4) {
+            if (!$own) {
+                continue;
+            }
+
+            // Deeper than the reader follows: it can't tell (review 4 M1).
+            if ($depth >= 4) {
+                $other = true;
+
                 continue;
             }
 
@@ -2361,7 +2896,9 @@ final class ProtectionHelper
         }
 
         if ($direct === null && !$other) {
-            return null;
+            // A method called from another one that writes the view changes
+            // what the caller's display() shows, even if it renders nothing.
+            return $depth > 0 && ($viewUnknown || $views !== []) ? self::UNKNOWN_VIEW : null;
         }
 
         if ($other || $viewUnknown) {
@@ -2384,6 +2921,106 @@ final class ProtectionHelper
     }
 
     /**
+     * In a display() method: is the `->set('view', $x)` at $position the way
+     * core's own display controllers keep the request's view,
+     * `$x = $this->input->getCmd('view', 'default'); $this->input->set('view', $x);`
+     * with $x written nowhere else? Only asked about display(), and that
+     * answer is only used when the request names a view (displayKeepsView()):
+     * with no `view` in the request $x is the default, which isn't read here.
+     *
+     * @param   array  $tokens    fileTokens() of the file.
+     * @param   int    $position  Position of the `set` method name.
+     * @param   int    $open      Position of the function body's opening brace.
+     * @param   int    $close     Position of its closing brace.
+     *
+     * @return  boolean
+     *
+     * @since   0.3.0
+     */
+    private static function writesRequestViewBack(array $tokens, int $position, int $open, int $close): bool
+    {
+        $variable = $tokens[$position + 4] ?? null;
+
+        if (
+            !\is_array($variable) || $variable[0] !== T_VARIABLE
+            || ($tokens[$position + 5] ?? null) !== ')'
+            || !self::onControllerInput($tokens, $position, $open)
+        ) {
+            return false;
+        }
+
+        $reads       = 0;
+        $comparisons = [T_IS_IDENTICAL, T_IS_NOT_IDENTICAL, T_IS_EQUAL, T_IS_NOT_EQUAL];
+
+        for ($i = $open + 1; $i < $close; $i++) {
+            $token = $tokens[$i];
+
+            if (!\is_array($token) || $token[0] !== T_VARIABLE || $token[1] !== $variable[1] || $i === $position + 4) {
+                continue;
+            }
+
+            $next     = $tokens[$i + 1] ?? null;
+            $previous = $tokens[$i - 1] ?? null;
+
+            // Read in a comparison: fine. Anything other than the one
+            // assignment below may change it ($x .= …, a by-reference
+            // argument, [$x] = …).
+            if (
+                (\is_array($next) && \in_array($next[0], $comparisons, true))
+                || (\is_array($previous) && \in_array($previous[0], $comparisons, true))
+            ) {
+                continue;
+            }
+
+            if ($next !== '=' || $i > $position || !self::assignsRequestView($tokens, $i)) {
+                return false;
+            }
+
+            $reads++;
+        }
+
+        return $reads === 1;
+    }
+
+    /**
+     * Is the statement at $position exactly
+     * `$x = $this->input->get…('view'…);` and nothing more?
+     *
+     * @param   array  $tokens    fileTokens() of the file.
+     * @param   int    $position  Position of the variable.
+     *
+     * @return  boolean
+     *
+     * @since   0.3.0
+     */
+    private static function assignsRequestView(array $tokens, int $position): bool
+    {
+        $subject = $tokens[$position + 2] ?? null;
+        $input   = $tokens[$position + 4] ?? null;
+        $getter  = $tokens[$position + 6] ?? null;
+        $key     = $tokens[$position + 8] ?? null;
+
+        if (
+            !\is_array($subject) || $subject[1] !== '$this'
+            || !\is_array($input) || $input[1] !== 'input'
+            || !\is_array($getter) || !\in_array(self::asciiLower($getter[1]), ['get', 'getcmd', 'getword', 'getstring'], true)
+            || ($tokens[$position + 7] ?? null) !== '('
+            || !\is_array($key) || $key[0] !== T_CONSTANT_ENCAPSED_STRING || trim($key[1], '\'"') !== 'view'
+        ) {
+            return false;
+        }
+
+        // The getter's closing bracket has to end the statement.
+        $depth = 1;
+
+        for ($i = $position + 8; $depth > 0 && isset($tokens[$i]); $i++) {
+            $depth += $tokens[$i] === '(' ? 1 : ($tokens[$i] === ')' ? -1 : 0);
+        }
+
+        return ($tokens[$i] ?? null) === ';';
+    }
+
+    /**
      * Is the call at $position part of a plain chain (`$this->input->set(`,
      * `$input->set(`, `$this->app->getInput()->set(`) that starts a
      * statement of its own (not after if, else, while, a label…)?
@@ -2394,7 +3031,7 @@ final class ProtectionHelper
      *
      * @return  boolean
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function startsStatement(array $tokens, int $position, int $open): bool
     {
@@ -2420,6 +3057,70 @@ final class ProtectionHelper
     }
 
     /**
+     * Is the method call at $position made on the controller's own input,
+     * the one display() reads the view from: `$this->input`,
+     * `$this->app->input`, `$this->app->getInput()` or
+     * `Factory::getApplication()->input` / `->getInput()`? Anything else (a
+     * Registry, `$this->input->post`, a local variable) is not (review 4 L1).
+     *
+     * @param   array  $tokens    fileTokens() of the file.
+     * @param   int    $position  Position of the method name.
+     * @param   int    $open      Position of the function body's opening brace.
+     *
+     * @return  boolean
+     *
+     * @since   0.3.0
+     */
+    private static function onControllerInput(array $tokens, int $position, int $open): bool
+    {
+        $kinds = [T_VARIABLE, T_OBJECT_OPERATOR, T_DOUBLE_COLON, T_STRING, T_NAME_FULLY_QUALIFIED, T_NAME_QUALIFIED];
+
+        // The plain chain in front of `->set(`.
+        for ($k = $position - 1; $k > $open; $k--) {
+            $token = $tokens[$k];
+
+            if (!(\is_array($token) && \in_array($token[0], $kinds, true)) && $token !== '(' && $token !== ')') {
+                break;
+            }
+        }
+
+        $chain = '';
+
+        for ($j = $k + 1; $j < $position - 1; $j++) {
+            $token = $tokens[$j];
+
+            if (!\is_array($token)) {
+                $chain .= $token;
+
+                continue;
+            }
+
+            $next = $tokens[$j + 1] ?? null;
+
+            $chain .= match (true) {
+                $token[0] === T_OBJECT_OPERATOR => '->',
+                $token[0] === T_DOUBLE_COLON    => '::',
+                $token[0] === T_VARIABLE        => $token[1],
+                // Class and method names are case-insensitive, property names aren't.
+                $token[0] !== T_STRING, $next === '(', \is_array($next) && $next[0] === T_DOUBLE_COLON => self::asciiLower(ltrim($token[1], '\\')),
+                default => $token[1],
+            };
+        }
+
+        $operator = $tokens[$position - 1] ?? null;
+
+        return \is_array($operator) && $operator[0] === T_OBJECT_OPERATOR && \in_array($chain, [
+            '$this->input',
+            '$this->app->input',
+            '$this->app->getinput()',
+            'factory::getapplication()->input',
+            'factory::getapplication()->getinput()',
+            'joomla\\cms\\factory\\factory::getapplication()->input',
+            'joomla\\cms\\factory\\factory::getapplication()->getinput()',
+        ], true);
+    }
+
+    /**
      * The menu item the request was opened under: the router's active item,
      * else the Itemid in the request.
      *
@@ -2427,7 +3128,7 @@ final class ProtectionHelper
      *
      * @return  object|null
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function getActiveItem(CMSApplicationInterface $app): ?object
     {
@@ -2456,7 +3157,7 @@ final class ProtectionHelper
      *
      * @return  integer
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function getRoutedItemId(CMSApplicationInterface $app): int
     {
@@ -2539,7 +3240,7 @@ final class ProtectionHelper
      *
      * @return  boolean
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function isActiveItemsOwnPage(CMSApplicationInterface $app, array $request): bool
     {
@@ -2592,7 +3293,7 @@ final class ProtectionHelper
      *
      * @return  string
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function queryString(array $query, string $key): string
     {
@@ -2607,7 +3308,7 @@ final class ProtectionHelper
      *
      * @return  integer
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function queryId(array $query): int
     {
@@ -2633,7 +3334,7 @@ final class ProtectionHelper
      *
      * @return  boolean
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function matchesProtectedView(CMSApplicationInterface $app, array $request, array $views): bool
     {
@@ -2802,7 +3503,7 @@ final class ProtectionHelper
      *
      * @return  boolean
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     public static function hasContentTargets(array $targets): bool
     {
@@ -2819,7 +3520,7 @@ final class ProtectionHelper
      *
      * @return  boolean
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     public static function isProtectedContact(int $contactId, int $categoryId, array $targets): bool
     {
@@ -2880,6 +3581,49 @@ final class ProtectionHelper
         }
 
         return false;
+    }
+
+    /**
+     * Is this the intro text of a protected article, as it is stored? Core's
+     * article modules hand over only the text (HTMLHelper content.prepare
+     * builds a new object holding nothing else), so there is no id to go by.
+     *
+     * @param   string  $text     The text an article module is about to show.
+     * @param   array{articles: int[], ranges: array<int, array{0: int, 1: int}>, contacts: array<int, array{0: int, 1: int}>, contactIds: int[]}  $targets  From getContentTargets().
+     *
+     * @return  boolean
+     *
+     * @since   0.3.0
+     */
+    public static function isProtectedIntroText(string $text, array $targets): bool
+    {
+        if (trim($text) === '' || ($targets['articles'] === [] && $targets['ranges'] === [])) {
+            return false;
+        }
+
+        if (self::$protectedIntroHashes === null) {
+            $db    = Factory::getContainer()->get(DatabaseInterface::class);
+            $where = [];
+
+            if ($targets['articles'] !== []) {
+                $where[] = $db->quoteName('a.id') . ' IN (' . implode(',', array_map('intval', $targets['articles'])) . ')';
+            }
+
+            foreach ($targets['ranges'] as [$lft, $rgt]) {
+                $where[] = '(' . $db->quoteName('c.lft') . ' >= ' . (int) $lft . ' AND ' . $db->quoteName('c.rgt') . ' <= ' . (int) $rgt . ')';
+            }
+
+            $query = $db->createQuery()
+                ->select('DISTINCT MD5(' . $db->quoteName('a.introtext') . ')')
+                ->from($db->quoteName('#__content', 'a'))
+                ->join('INNER', $db->quoteName('#__categories', 'c'), $db->quoteName('c.id') . ' = ' . $db->quoteName('a.catid'))
+                ->where($db->quoteName('a.state') . ' >= 1')
+                ->where('(' . implode(' OR ', $where) . ')');
+
+            self::$protectedIntroHashes = array_fill_keys($db->setQuery($query)->loadColumn(), true);
+        }
+
+        return isset(self::$protectedIntroHashes[md5($text)]);
     }
 
     /**
@@ -3066,10 +3810,19 @@ final class ProtectionHelper
             $item  = $menu->getItem($routed);
             $query = $item ? (array) ($item->query ?? []) : [];
 
-            return $item
+            $excludedTask = $item
                 && self::normaliseName(self::queryString($query, 'view')) === self::normaliseName((string) self::singleValue($input, 'view'))
                 && self::sameIds(self::linkIds($option, $query), self::requestIds($request))
                 && \in_array(self::queryString($query, 'layout'), ['', $layout], true);
+
+            // Excluded as a task sent to an excluded page, not as that page:
+            // if it shows an HTML page anyway, the plugin replaces it with the
+            // check after dispatch (render-time safety net).
+            if ($excludedTask) {
+                self::$renderCheck = self::renderCheckApplies($app, $input, $option);
+            }
+
+            return $excludedTask;
         }
 
         if ($request['view'] === self::UNKNOWN_VIEW) {
@@ -3096,6 +3849,10 @@ final class ProtectionHelper
                 && ($itemLayout === '' || $itemLayout === $layout)
                 && self::sameRecordKeys(self::recordKeys($option, $query), $request['keys'])
             ) {
+                if (self::isUnreadableTask($app, $input, $option)) {
+                    self::$renderCheck = self::renderCheckApplies($app, $input, $option);
+                }
+
                 return true;
             }
 
@@ -3120,7 +3877,7 @@ final class ProtectionHelper
      *
      * @return  boolean
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function sameRecordKeys(array $link, array $request): bool
     {
@@ -3293,7 +4050,7 @@ final class ProtectionHelper
      *
      * @return  boolean
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function keysMaySelect(array $link, array $request): bool
     {
@@ -3316,7 +4073,7 @@ final class ProtectionHelper
      *
      * @return  boolean
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function keysDiffer(array $link, array $request): bool
     {
@@ -3345,7 +4102,7 @@ final class ProtectionHelper
      *
      * @return  boolean
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     private static function contactListIncludesProtected(CMSApplicationInterface $app, string $view, int $categoryId, array $protectedCategories, array $protectedContacts = []): bool
     {
@@ -3425,7 +4182,7 @@ final class ProtectionHelper
      *
      * @return  string[]
      *
-     * @since   __DEPLOY_VERSION__
+     * @since   0.3.0
      */
     public static function detailViewsOf(string $listView): array
     {

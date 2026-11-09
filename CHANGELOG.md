@@ -2,6 +2,11 @@
 
 All notable changes to Cybersalt Page Protector are documented here. Only released versions are listed. People whose ideas or reports shaped a change are credited on that entry.
 
+## [0.3.1] - 2026-11-08
+
+### 🐛 Fixed
+- In a component that has something protected, a sign-up or checkout form that hands the visitor on to a payment provider (OS Membership's PayPal sign-up, for example) showed visitors who hadn't passed the check instead of going on to pay, and passing the check didn't bring them back to the form. The same happened to such a form shown again with an error message. Now a visitor who hasn't passed gets the check before the form is sent on, and once they pass, the form is sent on with everything they filled in (except attached files, which have to be chosen again).
+
 ## [0.3.0] - 2026-11-08
 
 ### 🔍 Security

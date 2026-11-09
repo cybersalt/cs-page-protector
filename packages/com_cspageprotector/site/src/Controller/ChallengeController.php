@@ -45,7 +45,6 @@ final class ChallengeController extends BaseController
      */
     public function verify(): void
     {
-        $params    = ProtectionHelper::getParams();
         $returnUrl = self::safeReturnUrl($this->input->post->getBase64('return', ''));
 
         $this->setRedirect($returnUrl);
@@ -54,10 +53,36 @@ final class ChallengeController extends BaseController
             return;
         }
 
+        // A form submit the check interrupted, carried by the check page
+        // (see VerificationHelper::holdForm()).
+        $form = $this->input->post->get('cspp_form', null, 'raw');
+
+        // Then send it on, passed or not: without a pass it simply gets the
+        // check once more, and a plain redirect would lose what the visitor
+        // filled in. Only with a valid token, so another site can't use the
+        // check page to post a form of its own.
+        if ($this->checkAnswer($returnUrl) && \is_array($form) && $form !== []) {
+            $this->sendForm($returnUrl, $form);
+        }
+    }
+
+    /**
+     * Check the captcha answer and, on success, issue the pass.
+     *
+     * @param   string  $returnUrl  Where the visitor goes next.
+     *
+     * @return  boolean  False when the form token wasn't valid.
+     *
+     * @since   0.3.1
+     */
+    private function checkAnswer(string $returnUrl): bool
+    {
+        $params = ProtectionHelper::getParams();
+
         if (!$this->checkToken('post', false)) {
             $this->app->enqueueMessage(Text::_('COM_CSPAGEPROTECTOR_CHALLENGE_EXPIRED'), 'warning');
 
-            return;
+            return false;
         }
 
         $ip          = IpHelper::getClientIp($params);
@@ -70,7 +95,7 @@ final class ChallengeController extends BaseController
             LogHelper::log($params, LogHelper::EVENT_ERROR, $ip, $userAgent, $returnUrl, $menuItemId, $captchaName, 'verify: captcha unavailable');
             $this->app->enqueueMessage(Text::_('COM_CSPAGEPROTECTOR_CHALLENGE_UNAVAILABLE'), 'warning');
 
-            return;
+            return true;
         }
 
         $raw    = $this->input->post->get(CaptchaHelper::FIELD_NAME, '', 'raw');
@@ -92,11 +117,50 @@ final class ChallengeController extends BaseController
             LogHelper::log($params, LogHelper::EVENT_FAILED, $ip, $userAgent, $returnUrl, $menuItemId, $captchaName, $detail);
             $this->app->enqueueMessage(Text::_('COM_CSPAGEPROTECTOR_CHALLENGE_FAILED'), 'warning');
 
-            return;
+            return true;
         }
 
         VerificationHelper::markVerified($this->app, $params, $ip, $userAgent);
         LogHelper::log($params, LogHelper::EVENT_PASSED, $ip, $userAgent, $returnUrl, $menuItemId, $captchaName, $source);
+
+        return true;
+    }
+
+    /**
+     * Answer with a page that posts the carried form to where it was sent, by
+     * itself (a Continue button when scripts can't run), and stop.
+     *
+     * @param   string  $url   Where the form was sent (already made safe).
+     * @param   array   $data  The posted fields.
+     *
+     * @return  void
+     *
+     * @since   0.3.1
+     */
+    private function sendForm(string $url, array $data): void
+    {
+        $esc   = static fn (string $text): string => htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $nonce = (string) $this->app->get('csp_nonce', '');
+        $nonce = $nonce !== '' ? ' nonce="' . $esc($nonce) . '"' : '';
+
+        $html = '<!DOCTYPE html><html><head><meta charset="utf-8">'
+            . '<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex, nofollow">'
+            . '<title>' . $esc(Text::_('COM_CSPAGEPROTECTOR_CHALLENGE_HEADING_DEFAULT')) . '</title></head><body>'
+            . '<form id="cspp-form-again" method="post" action="' . $esc($url) . '">'
+            . VerificationHelper::hiddenFields($data)
+            . '<p>' . $esc(Text::_('COM_CSPAGEPROTECTOR_CHALLENGE_DONE')) . '</p>'
+            . '<button type="submit">' . $esc(Text::_('COM_CSPAGEPROTECTOR_CHALLENGE_CONTINUE')) . '</button></form>'
+            . '<script' . $nonce . '>document.getElementById("cspp-form-again").submit();</script>'
+            . '</body></html>';
+
+        $this->app->setHeader('Content-Type', 'text/html; charset=utf-8', true);
+        $this->app->setHeader('Cache-Control', 'no-store, no-cache, must-revalidate', true);
+        $this->app->setHeader('X-Robots-Tag', 'noindex, nofollow', true);
+        $this->app->sendHeaders();
+
+        echo $html;
+
+        $this->app->close();
     }
 
     /**

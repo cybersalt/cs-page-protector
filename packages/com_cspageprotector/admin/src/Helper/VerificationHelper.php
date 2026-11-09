@@ -40,6 +40,73 @@ final class VerificationHelper
     private const VERSION = 'v1';
 
     /**
+     * A form submit the check interrupted, for this request only (see
+     * holdForm()).
+     *
+     * @var    array|null
+     * @since  0.3.1
+     */
+    private static ?array $heldForm = null;
+
+    /**
+     * Hold a form submit the check interrupted, so the check page can carry
+     * it in its own form (as hidden `cspp_form[…]` fields) and
+     * ChallengeController::verify() can send it on once the visitor has
+     * passed. Nothing is stored on the server, and the check page only ever
+     * carries what was set here, never what a request names.
+     *
+     * @param   array  $data  The posted fields, as sent.
+     *
+     * @return  void
+     *
+     * @since   0.3.1
+     */
+    public static function holdForm(array $data): void
+    {
+        self::$heldForm = $data;
+    }
+
+    /**
+     * The form held for this request (see holdForm()), or null.
+     *
+     * @return  array|null
+     *
+     * @since   0.3.1
+     */
+    public static function heldForm(): ?array
+    {
+        return self::$heldForm;
+    }
+
+    /**
+     * Hidden fields for posted data, arrays as name[key], everything escaped.
+     *
+     * @param   array   $data    Field values.
+     * @param   string  $prefix  Name of the enclosing array ('' at the top).
+     *
+     * @return  string
+     *
+     * @since   0.3.1
+     */
+    public static function hiddenFields(array $data, string $prefix = ''): string
+    {
+        $esc  = static fn (string $text): string => htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $html = '';
+
+        foreach ($data as $key => $value) {
+            $name = $prefix === '' ? (string) $key : $prefix . '[' . $key . ']';
+
+            if (\is_array($value)) {
+                $html .= self::hiddenFields($value, $name);
+            } elseif (\is_scalar($value)) {
+                $html .= '<input type="hidden" name="' . $esc($name) . '" value="' . $esc((string) $value) . '">';
+            }
+        }
+
+        return $html;
+    }
+
+    /**
      * Has this visitor already passed the challenge?
      *
      * @param   CMSApplicationInterface  $app        The application.

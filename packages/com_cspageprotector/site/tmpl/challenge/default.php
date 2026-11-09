@@ -58,6 +58,7 @@ $wa->useStyle('com_cspageprotector.challenge')->useScript('com_cspageprotector.c
 
             <input type="hidden" name="return" value="<?php echo $this->escape($this->returnB64); ?>">
             <input type="hidden" name="cspp_item" value="<?php echo (int) $this->itemId; ?>">
+            <?php echo $this->heldFields; ?>
             <?php echo HTMLHelper::_('form.token'); ?>
         </form>
 

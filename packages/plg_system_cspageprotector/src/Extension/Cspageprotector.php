@@ -445,6 +445,12 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
                 if (ProtectionHelper::needsRenderCheck($app, $params)) {
                     $app->allowCache(false);
                     $this->renderCheck = true;
+
+                    // A form the visitor's browser submits: the check comes
+                    // first and the task runs once they've passed.
+                    if ($this->isBrowserFormSubmit($app)) {
+                        $this->guardFormSubmit($app, $params);
+                    }
                 }
 
                 return;
@@ -863,6 +869,66 @@ final class Cspageprotector extends CMSPlugin implements SubscriberInterface
         LogHelper::log($params, LogHelper::EVENT_CHALLENGED, $ip, $userAgent, $url, $itemId, $captcha, $detail);
 
         return self::DECISION_CHALLENGE;
+    }
+
+    /**
+     * Is this a form the visitor's browser submits as a page from this site
+     * (a POST the browser marks `Sec-Fetch-Dest: document` and
+     * `Sec-Fetch-Site: same-origin`), asking for an HTML answer? AJAX calls,
+     * server-to-server callbacks, forms posted from other sites and browsers
+     * that don't send the headers aren't: they keep the render-time safety
+     * net (onAfterDispatch()).
+     *
+     * @param   CMSApplicationInterface  $app  The application.
+     *
+     * @return  boolean
+     *
+     * @since   0.3.1
+     */
+    private function isBrowserFormSubmit(CMSApplicationInterface $app): bool
+    {
+        $input  = $app->getInput();
+        $format = ProtectionHelper::singleValue($input, 'format', 'word', 'html');
+
+        return strtoupper((string) $input->getMethod()) === 'POST'
+            && ProtectionHelper::asciiLower($input->server->getString('HTTP_SEC_FETCH_DEST', '')) === 'document'
+            && ProtectionHelper::asciiLower($input->server->getString('HTTP_SEC_FETCH_SITE', '')) === 'same-origin'
+            && $format !== null
+            && ProtectionHelper::asciiLower($format) === 'html';
+    }
+
+    /**
+     * A form submit the render-time safety net applies to (see
+     * isBrowserFormSubmit()). The net replaces the page the task shows with
+     * the check after the task ran, and what was posted is lost: a sign-up
+     * form handing the visitor on to a payment provider never got there. So
+     * a visitor without a pass gets the check before the task runs, and the
+     * check page carries the form (VerificationHelper::holdForm()) so it is
+     * sent on once they've passed (ChallengeController). The task then runs
+     * once, with a pass, and the net lets its page through. Exempt visitors
+     * and those with a pass go straight on; when the captcha can't run and
+     * the site blocks, the task runs and the net decides, as before.
+     *
+     * @param   CMSApplicationInterface  $app     The application.
+     * @param   Registry                 $params  Component params.
+     *
+     * @return  void
+     *
+     * @since   0.3.1
+     */
+    private function guardFormSubmit(CMSApplicationInterface $app, Registry $params): void
+    {
+        $decision = $this->decide($app, $params, 'form');
+
+        if ($decision !== self::DECISION_CHALLENGE) {
+            return;
+        }
+
+        // The posted fields as sent: Input's filters would change them.
+        VerificationHelper::holdForm($_POST);
+
+        $this->renderCheck = false;
+        $this->handToChallenge($app->getInput());
     }
 
     /**

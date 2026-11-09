@@ -16,6 +16,7 @@ use Cybersalt\Component\Cspageprotector\Administrator\Helper\CaptchaHelper;
 use Cybersalt\Component\Cspageprotector\Administrator\Helper\IpHelper;
 use Cybersalt\Component\Cspageprotector\Administrator\Helper\LogHelper;
 use Cybersalt\Component\Cspageprotector\Administrator\Helper\ProtectionHelper;
+use Cybersalt\Component\Cspageprotector\Administrator\Helper\VerificationHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
@@ -53,6 +54,9 @@ final class HtmlView extends BaseHtmlView
 
     /** @var string */
     public $formAction = '';
+
+    /** @var string Escaped hidden fields of a form submit the check interrupted. */
+    public $heldFields = '';
 
     /**
      * @param   string|null  $tpl  Template.
@@ -92,6 +96,10 @@ final class HtmlView extends BaseHtmlView
         $this->autoStart  = (int) $params->get('auto_start', 1) === 1;
         $this->autoSubmit = (int) $params->get('auto_submit', 1) === 1;
         $this->formAction = Route::_('index.php?option=com_cspageprotector&task=challenge.verify' . ($this->itemId ? '&Itemid=' . $this->itemId : ''));
+
+        // Only what the plugin held for this request, never request input.
+        $held             = VerificationHelper::heldForm();
+        $this->heldFields = $held !== null ? VerificationHelper::hiddenFields($held, 'cspp_form') : '';
 
         $heading       = trim((string) $params->get('challenge_heading', ''));
         $this->heading = $heading !== '' ? $heading : Text::_('COM_CSPAGEPROTECTOR_CHALLENGE_HEADING_DEFAULT');

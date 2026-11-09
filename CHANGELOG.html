@@ -2,6 +2,16 @@
     <h1>📋 Cybersalt Page Protector - Changelog</h1>
 
     <h2>
+        <span class="version-badge">v0.3.1</span>
+        <span class="date">2026-11-08</span>
+    </h2>
+
+    <h3><span class="section-icon">🐛</span>Fixed</h3>
+    <ul>
+        <li><strong>Sign-up and checkout forms</strong>: in a component that has something protected, a sign-up or checkout form that hands the visitor on to a payment provider (OS Membership's PayPal sign-up, for example) showed visitors who hadn't passed the check instead of going on to pay, and passing the check didn't bring them back to the form. The same happened to such a form shown again with an error message. Now a visitor who hasn't passed gets the check before the form is sent on, and once they pass, the form is sent on with everything they filled in (except attached files, which have to be chosen again).</li>
+    </ul>
+
+    <h2>
         <span class="version-badge">v0.3.0</span>
         <span class="date">2026-11-08</span>
     </h2>

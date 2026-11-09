@@ -4,7 +4,7 @@ Project notes for Claude. Layers on top of `~/.claude/CLAUDE.md` and the vault's
 
 ## What this repo is
 
-Cybersalt Page Protector: a Joomla 5/6 package that puts a proof-of-work check in front of selected menu items and modules to slow down scrapers. **v0.3.0 released 2026-11-08** (GitHub + cs-Release-Manager; 0.2.1 2026-10-20, 0.2.0 2026-10-10, 0.1.0 2026-10-07). v1 uses Joomla 6.1's core Proof-of-Work captcha (`plg_captcha_powcaptcha`, ALTCHA-based) through Joomla's captcha framework, so other captcha plugins already work and new challenge types can be added later.
+Cybersalt Page Protector: a Joomla 5/6 package that puts a proof-of-work check in front of selected menu items and modules to slow down scrapers. **v0.3.1 released 2026-11-08** (GitHub + cs-Release-Manager; 0.3.0 2026-11-08, 0.2.1 2026-10-20, 0.2.0 2026-10-10, 0.1.0 2026-10-07). v1 uses Joomla 6.1's core Proof-of-Work captcha (`plg_captcha_powcaptcha`, ALTCHA-based) through Joomla's captcha framework, so other captcha plugins already work and new challenge types can be added later.
 
 Vault note: `04.knowledge/cs-page-protector.md` - history, decisions, open items. Update it on every meaningful change.
 

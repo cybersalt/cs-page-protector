@@ -18,7 +18,6 @@ use Cybersalt\Component\Cspageprotector\Administrator\Helper\PermissionHelper;
 use Cybersalt\Component\Cspageprotector\Administrator\Helper\ProtectionHelper;
 use Cybersalt\Component\Cspageprotector\Administrator\Helper\VerificationHelper;
 use Joomla\CMS\Access\Exception\NotAllowed;
-use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Log\Log;
 use Joomla\CMS\MVC\Controller\BaseController;
@@ -46,7 +45,7 @@ final class DashboardController extends BaseController
         PermissionHelper::requireAdmin();
 
         try {
-            $params = clone ComponentHelper::getParams('com_cspageprotector');
+            $params = ProtectionHelper::storedParams();
             $params->set('pass_salt', bin2hex(random_bytes(16)));
             ProtectionHelper::saveParams($params);
 

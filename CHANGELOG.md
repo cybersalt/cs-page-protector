@@ -2,6 +2,16 @@
 
 All notable changes to Cybersalt Page Protector are documented here. Only released versions are listed. People whose ideas or reports shaped a change are credited on that entry.
 
+## [1.0.0] - 2026-11-12
+
+The first stable release. Page Protector began as a group effort on the Joomla live stream [WMW #355](https://www.youtube.com/watch?v=GRC-g6ahzgQ) on 7 October 2026, with ideas from the people watching, and it stays free.
+
+### 🔍 Security
+- Hardened how the IP allow-list and the trusted proxy list are read. Everything after a `#` on a line is a comment, whatever else is on that line.
+
+### 🔧 Changed
+- Resetting all passes from the dashboard, and accepting the "no guarantee" notice, now start from the saved settings rather than a cached copy, so they can't put back an older setting.
+
 ## [0.3.1] - 2026-11-08
 
 ### 🐛 Fixed

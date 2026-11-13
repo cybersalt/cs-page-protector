@@ -6,6 +6,8 @@ Put a proof-of-work check in front of the Joomla pages you choose, so scrapers h
 
 **[Documentation](https://docs.cybersalt.com/extensions/page-protector)** · **[Product page and download](https://www.cybersalt.com/extensions/page-protector)** · **[Changelog](https://docs.cybersalt.com/extensions/page-protector/changelog)** · **[Support](https://www.cybersalt.com/services/support-request-form)**
 
+Page Protector began as a group effort on the Joomla live stream [WMW #355](https://www.youtube.com/watch?v=GRC-g6ahzgQ) (7 October 2026), built on air with ideas from the people watching. That's why it's free.
+
 A real visitor sees a short "Checking your browser" step once. Their browser solves a small puzzle in about a second, they get a pass, and they browse every protected page normally until the pass expires. A scraper pulling thousands of pages has to solve that puzzle again and again. Scrapers that don't run JavaScript or keep cookies never get the content at all.
 
 ## What it does

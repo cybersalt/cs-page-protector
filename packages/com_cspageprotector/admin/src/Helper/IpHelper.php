@@ -145,8 +145,9 @@ final class IpHelper
 
     /**
      * Does the IP match any entry in a newline / comma separated allowlist?
-     * Entries may be single addresses or CIDR ranges. Lines starting with # are
-     * comments.
+     * Entries may be single addresses or CIDR ranges. "#" starts a comment that
+     * runs to the end of its line, so a commented-out line never leaves a live
+     * entry behind, even when it held several entries separated by commas.
      *
      * @param   string  $ip    The address to test.
      * @param   string  $list  The raw allowlist text from the options form.
@@ -161,11 +162,15 @@ final class IpHelper
             return false;
         }
 
-        foreach (preg_split('/[\r\n,]+/', $list) ?: [] as $entry) {
-            $entry = trim(preg_replace('/#.*$/', '', $entry) ?? '');
+        foreach (preg_split('/\R/', $list) ?: [] as $line) {
+            $line = (string) preg_replace('/#.*$/', '', $line);
 
-            if ($entry !== '' && self::matches($ip, $entry)) {
-                return true;
+            foreach (explode(',', $line) as $entry) {
+                $entry = trim($entry);
+
+                if ($entry !== '' && self::matches($ip, $entry)) {
+                    return true;
+                }
             }
         }
 

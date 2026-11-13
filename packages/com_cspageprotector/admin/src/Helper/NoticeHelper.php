@@ -55,7 +55,7 @@ final class NoticeHelper
      */
     public static function accept(User $user): void
     {
-        $params = clone ProtectionHelper::getParams();
+        $params = ProtectionHelper::storedParams();
         $params->set('notice_accepted_by', (int) $user->id);
         $params->set('notice_accepted_name', (string) $user->name);
         $params->set('notice_accepted_at', Factory::getDate()->toSql());

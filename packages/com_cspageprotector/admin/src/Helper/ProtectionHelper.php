@@ -413,7 +413,7 @@ final class ProtectionHelper
      */
     public static function asciiLower(string $text): string
     {
-        return strtr($text, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz');
+        return (string) preg_replace_callback('/[A-Z]/', static fn (array $m): string => \chr(\ord($m[0]) + 32), $text);
     }
 
     /**
@@ -514,6 +514,30 @@ final class ProtectionHelper
     public static function getParams(): Registry
     {
         return ComponentHelper::getParams('com_cspageprotector');
+    }
+
+    /**
+     * The component params as stored in #__extensions, never the cached copy.
+     * Read these before changing one value and writing them back with
+     * saveParams(), so a stale cached copy can't overwrite newer settings.
+     *
+     * @return  Registry
+     *
+     * @since   1.0.0
+     */
+    public static function storedParams(): Registry
+    {
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+
+        $json = (string) $db->setQuery(
+            $db->createQuery()
+                ->select($db->quoteName('params'))
+                ->from($db->quoteName('#__extensions'))
+                ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
+                ->where($db->quoteName('element') . ' = ' . $db->quote('com_cspageprotector'))
+        )->loadResult();
+
+        return new Registry($json !== '' ? $json : '{}');
     }
 
     /**
